@@ -3,9 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "generate-index": "npx tsx scripts/generate-search-index.ts",
-    "dev": "npm run generate-index && dotenv -c .env.local next dev --turbopack",
-    "prebuild": "npm run generate-index",
+    "dev": "dotenv -c .env.local next dev --turbopack",
     "build": "dotenv -c .env.local next build",
     "start": "dotenv -c .env.local next start",
     "lint": "next lint",
