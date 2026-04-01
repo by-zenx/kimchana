@@ -1,11 +1,12 @@
 import { relations } from "drizzle-orm/relations";
-import { edges, moves, players, rooms, squares } from "../db/schema";
+import { chatMessages, edges, moves, players, rooms, squares } from "../db/schema";
 
 export const roomRelations = relations(rooms, ({ many }) => ({
   players: many(players),
   edges: many(edges),
   squares: many(squares),
   moves: many(moves),
+  chatMessages: many(chatMessages),
 }));
 
 export const playerRelations = relations(players, ({ one, many }) => ({
@@ -15,6 +16,7 @@ export const playerRelations = relations(players, ({ one, many }) => ({
   }),
   edges: many(edges),
   moves: many(moves),
+  chatMessages: many(chatMessages),
 }));
 
 export const edgeRelations = relations(edges, ({ one }) => ({
@@ -46,6 +48,17 @@ export const moveRelations = relations(moves, ({ one }) => ({
   }),
   player: one(players, {
     fields: [moves.player_id],
+    references: [players.id],
+  }),
+}));
+
+export const chatRelations = relations(chatMessages, ({ one }) => ({
+  room: one(rooms, {
+    fields: [chatMessages.room_id],
+    references: [rooms.id],
+  }),
+  player: one(players, {
+    fields: [chatMessages.player_id],
     references: [players.id],
   }),
 }));

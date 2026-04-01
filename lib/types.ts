@@ -6,6 +6,8 @@ export interface Player {
   color: string;
   score: number;
   order: number;
+  isActive: boolean;
+  isHost?: boolean;
 }
 
 export interface Square {
@@ -24,13 +26,37 @@ export interface GameState {
   winnerId: string | null;
 }
 
+export interface RoomSettings {
+  allowAutoMove: boolean;
+  timeoutSeconds: number | null;
+  autoMoveEnabled: boolean;
+  label?: string;
+  description?: string;
+}
+
 export interface Room {
   id: string;
+  hostId: string;
   gridSize: { rows: number; cols: number };
   playerCount: number;
+  maxPlayers: number;
+  timerSeconds: number;
+  autoMoveEnabled: boolean;
+  status: GameState['status'];
+  settings: RoomSettings;
   createdAt: number;
   gameState: GameState;
   players: Player[];
+  chatMessages?: ChatMessage[];
+}
+
+export interface ChatMessage {
+  id: number;
+  roomId: string;
+  playerId: string;
+  playerName: string;
+  content: string;
+  createdAt: string;
 }
 
 export interface GameMove {

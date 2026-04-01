@@ -44,6 +44,7 @@ export const rooms = pgTable("rooms", {
   finished_at: timestamp("finished_at", { withTimezone: true }),
   last_activity_at: timestamp("last_activity_at", { withTimezone: true }).defaultNow().notNull(),
   settings: jsonb("settings").$type<RoomSettings>().default(sql`'{}'::jsonb`).notNull(),
+  game_state: jsonb("game_state").default(sql`'{}'::jsonb`).notNull(),
 });
 
 export const players = pgTable(
@@ -52,6 +53,7 @@ export const players = pgTable(
     id: text("id").primaryKey(),
     room_id: text("room_id").notNull().references(() => rooms.id),
     name: text("name").notNull(),
+    token: text("token").notNull(),
     color: text("color").notNull(),
     score: integer("score").notNull().default(0),
     order: integer("order").notNull(),
@@ -63,6 +65,7 @@ export const players = pgTable(
   (player) => ({
     roomOrderUnique: uniqueIndex("players_room_order_unique").on(player.room_id, player.order),
     roomColorUnique: uniqueIndex("players_room_color_unique").on(player.room_id, player.color),
+    roomTokenUnique: uniqueIndex("players_room_token_unique").on(player.room_id, player.token),
     roomPlayerIndex: index("players_room_id_idx").on(player.room_id),
   }),
 );
@@ -123,4 +126,18 @@ export const moves = pgTable(
   }),
 );
 
-export const schema = { rooms, players, edges, squares, moves };
+export const chatMessages = pgTable(
+  "chat_messages",
+  {
+    id: serial("id").primaryKey(),
+    room_id: text("room_id").notNull().references(() => rooms.id),
+    player_id: text("player_id").notNull().references(() => players.id),
+    content: text("content").notNull(),
+    created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (message) => ({
+    chatRoomIndex: index("chat_room_id_idx").on(message.room_id),
+  }),
+);
+
+export const schema = { rooms, players, edges, squares, moves, chatMessages };

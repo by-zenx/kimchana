@@ -1,7 +1,25 @@
 import { GameState, Player, Square, EdgeKey } from './types';
+
+export type SerializedGameState = Omit<GameState, 'edges'> & {
+  edges: EdgeKey[];
+};
 import { PLAYER_COLORS, DEFAULT_GRID_SIZE } from './constants';
 
 export class GameEngine {
+  static serializeState(state: GameState): SerializedGameState {
+    return {
+      ...state,
+      edges: Array.from(state.edges),
+    };
+  }
+
+  static deserializeState(payload: SerializedGameState): GameState {
+    return {
+      ...payload,
+      edges: new Set(payload.edges),
+    };
+  }
+
   static createInitialState(
     gridSize: { rows: number; cols: number },
     players: Player[]

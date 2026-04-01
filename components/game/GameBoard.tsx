@@ -1,17 +1,17 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Room } from '@/lib/types';
+import { Room, GameState } from '@/lib/types';
 import { GameEngine } from '@/lib/game-engine';
 import { GRID_SPACING, DOT_SIZE } from '@/lib/constants';
-import { Grid } from './Grid';
 
 interface GameBoardProps {
   room: Room;
-  onUpdateRoom: (room: Room) => void;
+  playerId: string | null;
+  onStateChange?: (state: GameState) => void;
 }
 
-export function GameBoard({ room, onUpdateRoom }: GameBoardProps) {
+export function GameBoard({ room, playerId, onStateChange }: GameBoardProps) {
   const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
   const { gridSize, edges, squares, players, currentPlayerIndex } = room.gameState;
   
@@ -23,24 +23,21 @@ export function GameBoard({ room, onUpdateRoom }: GameBoardProps) {
   const currentPlayer = players[currentPlayerIndex];
 
   const handleEdgeClick = (edgeKey: string) => {
+    if (!playerId) {
+      return;
+    }
+
     if (!GameEngine.isValidEdgeMove(edgeKey, room.gameState)) {
       return;
     }
 
-    // Use first player's ID as the player making the move (in a real app, would be authenticated)
-    const { newState, squaresCompleted } = GameEngine.playMove(
+    const { newState } = GameEngine.playMove(
       room.gameState,
       edgeKey,
-      currentPlayer.id
+      playerId
     );
 
-    // Update room with new state
-    const updatedRoom: Room = {
-      ...room,
-      gameState: newState,
-    };
-
-    onUpdateRoom(updatedRoom);
+    onStateChange?.(newState);
   };
 
   return (

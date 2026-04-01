@@ -11,8 +11,7 @@ import {
   User,
   X,
 } from 'lucide-react';
-import { GameEngine } from '@/lib/game-engine';
-import { GRID_SIZES, MAX_PLAYERS, MIN_PLAYERS, PLAYER_COLORS } from '@/lib/constants';
+import { GRID_SIZES, MAX_PLAYERS, MIN_PLAYERS } from '@/lib/constants';
 
 type EntryMode = 'join' | 'create';
 
@@ -91,8 +90,9 @@ export function EntryPanel({ initialMode = 'join' }: EntryPanelProps) {
       const response = await fetch('/api/rooms/code');
       if (response.ok) {
         const { roomId } = await response.json();
+        const uppercaseId = roomId?.toUpperCase?.() ?? roomId;
         setCopyStatus('');
-        setGeneratedRoomCode(roomId);
+        setGeneratedRoomCode(uppercaseId);
       }
     } finally {
       setIsGeneratingCode(false);
@@ -118,28 +118,61 @@ export function EntryPanel({ initialMode = 'join' }: EntryPanelProps) {
     setFormData((prev) => ({ ...prev, roomCode: '' }));
   }, [mode]);
 
+  const [alertText, setAlertText] = useState('');
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!formData.playerName.trim()) {
+    setAlertText('');
+
+    const playerName = formData.playerName.trim();
+    if (!playerName) {
+      setAlertText('Enter a player name before continuing.');
       return;
     }
 
     if (mode === 'join') {
-      if (!formData.roomCode.trim()) {
+      const code = formData.roomCode.trim().toUpperCase();
+      if (!code) {
+        setAlertText('Enter a room code to join.');
         return;
       }
-      const code = formData.roomCode.toUpperCase();
-      const roomsData = JSON.parse(localStorage.getItem('game-rooms') || '{}');
-      const room = roomsData[code];
-      if (!room) {
-        alert('Room not found locally yet.');
-        return;
+
+      setIsCreating(true);
+      try {
+        const response = await fetch('/api/rooms/join', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ roomId: code, playerName }),
+        });
+
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          setAlertText(
+            data?.error || 'Unable to join that room. Check the code and try again.',
+          );
+          return;
+        }
+
+        const payload = await response.json();
+        const session = {
+          playerId: payload.playerId,
+          playerToken: payload.playerToken,
+          playerName,
+          isHost: payload.playerId === payload.room.hostId,
+        };
+        localStorage.setItem(`room-${payload.room.id}-session`, JSON.stringify(session));
+        router.push(`/room/${payload.room.id}`);
+      } finally {
+        setIsCreating(false);
       }
-      router.push(`/room/${code}`);
+
       return;
     }
 
     if (!generatedRoomCode) {
+      setAlertText('Generating a room code. Please wait a moment.');
       return;
     }
 
@@ -147,49 +180,32 @@ export function EntryPanel({ initialMode = 'join' }: EntryPanelProps) {
     try {
       const response = await fetch('/api/rooms', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roomId: generatedRoomCode,
-          playerName: formData.playerName.trim(),
-          gridRows: GRID_SIZES[selectedGridIndex].rows,
-          gridCols: GRID_SIZES[selectedGridIndex].cols,
+          playerName,
+          gridRows: (gridOptions[selectedGridIndex] ?? gridOptions[0]).rows,
+          gridCols: (gridOptions[selectedGridIndex] ?? gridOptions[0]).cols,
           playerCount,
           autoMoveEnabled,
         }),
-        headers: {
-          'Content-Type': 'application/json',
-        },
       });
+
       if (!response.ok) {
-        const data = await response.json();
-        alert(data.error || 'Failed to create room');
+        const data = await response.json().catch(() => ({}));
+        setAlertText(data?.error || 'Unable to create room. Try again.');
         return;
       }
 
-      const playersPayload = Array.from({ length: playerCount }, (_, i) =>
-        GameEngine.createPlayer(`player-${i}`, `Player ${i + 1}`, i, i),
-      );
-      playersPayload[0].name = formData.playerName.trim();
-
-      const gameState = GameEngine.createInitialState(
-        GRID_SIZES[selectedGridIndex],
-        playersPayload,
-      );
-
-      const roomData = {
-        id: generatedRoomCode,
-        gridSize: GRID_SIZES[selectedGridIndex],
-        playerCount,
-        createdAt: Date.now(),
-        players: playersPayload,
-        gameState,
+      const payload = await response.json();
+      const session = {
+        playerId: payload.playerId,
+        playerToken: payload.playerToken,
+        playerName,
+        isHost: true,
       };
-
-      const roomsData = JSON.parse(localStorage.getItem('game-rooms') || '{}');
-      roomsData[generatedRoomCode] = roomData;
-      localStorage.setItem('game-rooms', JSON.stringify(roomsData));
-      localStorage.setItem(`room-${generatedRoomCode}`, JSON.stringify(roomData));
-
-      router.push(`/room/${generatedRoomCode}`);
+      localStorage.setItem(`room-${payload.roomId}-session`, JSON.stringify(session));
+      router.push(`/room/${payload.roomId}`);
     } finally {
       setIsCreating(false);
     }
@@ -346,6 +362,11 @@ export function EntryPanel({ initialMode = 'join' }: EntryPanelProps) {
             <p className="mt-4 text-center text-[11px] font-semibold uppercase tracking-[0.55em] text-slate-900/70">
               {helperText}
             </p>
+            {alertText && (
+              <p className="mt-2 text-center text-[10px] font-semibold uppercase tracking-[0.4em] text-rose-100">
+                {alertText}
+              </p>
+            )}
             <div
               className={`absolute inset-6 z-20 rounded-[28px] border border-white/30 bg-black/90 p-5 text-[10px] uppercase tracking-[0.3em] text-slate-100 shadow-[0_40px_70px_rgba(0,0,0,0.75)] transition duration-300 ${
                 infoOpen
