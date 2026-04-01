@@ -5,13 +5,42 @@ import { Room, GameState } from '@/lib/types';
 import { GameEngine } from '@/lib/game-engine';
 import { GRID_SPACING, DOT_SIZE } from '@/lib/constants';
 
+// Add custom animation styles
+const customStyles = `
+  @keyframes floatUp {
+    0% {
+      opacity: 1;
+      transform: translateY(0px) scale(1);
+    }
+    50% {
+      opacity: 0.8;
+      transform: translateY(-20px) scale(1.1);
+    }
+    100% {
+      opacity: 0;
+      transform: translateY(-50px) scale(0.8);
+    }
+  }
+`;
+
 interface GameBoardProps {
   room: Room;
   playerId: string | null;
   onStateChange?: (state: GameState) => void;
+  chatBubbles?: Array<{id: string, playerId: string, message: string, x?: number, y?: number}>;
 }
 
-export function GameBoard({ room, playerId, onStateChange }: GameBoardProps) {
+export function GameBoard({ room, playerId, onStateChange, chatBubbles = [] }: GameBoardProps) {
+  // Inject custom styles
+  useEffect(() => {
+    const styleElement = document.createElement('style');
+    styleElement.textContent = customStyles;
+    document.head.appendChild(styleElement);
+    return () => {
+      document.head.removeChild(styleElement);
+    };
+  }, []);
+
   const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
   const { gridSize, edges, squares, players, currentPlayerIndex } = room.gameState;
   
@@ -368,6 +397,49 @@ export function GameBoard({ room, playerId, onStateChange }: GameBoardProps) {
               );
             })}
         </div>
+
+        {/* Chat Bubbles near Avatars */}
+        {chatBubbles.map((bubble) => {
+          const player = players.find((p) => p.id === bubble.playerId);
+          const playerIndex = players.findIndex((p) => p.id === bubble.playerId);
+          if (!player || playerIndex === -1) return null;
+
+          // Calculate position based on avatar position
+          const avatarPositions = getAvatarPositions(players.length);
+          const playerPos = avatarPositions[playerIndex];
+          if (!playerPos) return null;
+
+          let bubbleX = 0;
+          let bubbleY = 0;
+
+          if (playerPos.side === 'left') {
+            bubbleX = 60; // Near left avatars
+            bubbleY = 100 + playerPos.index * 80;
+          } else {
+            bubbleX = boardWidth + 100; // Near right avatars
+            bubbleY = 100 + playerPos.index * 80;
+          }
+
+          return (
+            <div
+              key={bubble.id}
+              className="absolute pointer-events-none animate-bounce"
+              style={{
+                left: `${bubbleX}px`,
+                top: `${bubbleY}px`,
+                animation: 'floatUp 3s ease-out forwards',
+                zIndex: 50
+              }}
+            >
+              <div 
+                className="rounded-full px-3 py-2 text-white text-sm shadow-lg max-w-[200px] wrap-break-word"
+                style={{ backgroundColor: player.color }}
+              >
+                {bubble.message}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {/* Move Counter */}

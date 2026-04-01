@@ -18,6 +18,42 @@ import {
 } from 'lucide-react';
 import { GRID_SIZES } from '@/lib/constants';
 
+// Add custom animation styles
+const customStyles = `
+  @keyframes floatUp {
+    0% {
+      opacity: 1;
+      transform: translateY(0px) scale(1);
+    }
+    50% {
+      opacity: 0.8;
+      transform: translateY(-20px) scale(1.1);
+    }
+    100% {
+      opacity: 0;
+      transform: translateY(-50px) scale(0.8);
+    }
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 3px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 3px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.5);
+  }
+`;
+
 type PlayerSession = {
   playerId: string;
   playerToken: string;
@@ -30,6 +66,16 @@ const GRID_OPTIONS = GRID_SIZES.slice(0, 3);
 export default function RoomPage() {
   const params = useParams();
   const roomId = (params?.roomId as string)?.toUpperCase();
+
+  // Inject custom styles
+  useEffect(() => {
+    const styleElement = document.createElement('style');
+    styleElement.textContent = customStyles;
+    document.head.appendChild(styleElement);
+    return () => {
+      document.head.removeChild(styleElement);
+    };
+  }, []);
   const [room, setRoom] = useState<Room | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -47,6 +93,8 @@ export default function RoomPage() {
   const [error, setError] = useState('');
   const [copyStatus, setCopyStatus] = useState('');
   const [chatSending, setChatSending] = useState(false);
+  const [chatBubbleOpen, setChatBubbleOpen] = useState(false);
+  const [animatedChatBubbles, setAnimatedChatBubbles] = useState<Array<{id: string, playerId: string, message: string, x?: number, y?: number}>>([]);
   const socketRef = useRef<WebSocket | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -346,6 +394,19 @@ export default function RoomPage() {
         const data = await response.json();
         if (data?.chatMessage) {
           setChatMessages((prev) => [...prev, data.chatMessage]);
+          
+          // Create animated chat bubble for GameBoard
+          const bubbleId = Date.now().toString();
+          setAnimatedChatBubbles(prev => [...prev, {
+            id: bubbleId,
+            playerId: data.chatMessage.playerId,
+            message: data.chatMessage.content
+          }]);
+          
+          // Remove bubble after animation
+          setTimeout(() => {
+            setAnimatedChatBubbles(prev => prev.filter(b => b.id !== bubbleId));
+          }, 3000);
         }
       }
     } catch (error) {
@@ -353,6 +414,7 @@ export default function RoomPage() {
     } finally {
       setChatDraft('');
       setChatSending(false);
+      setChatBubbleOpen(false); // Close the chat bubble after sending
     }
   };
 
@@ -642,7 +704,7 @@ export default function RoomPage() {
             )}
 
             {/* Main Game Area */}
-            <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">
+            <div className="relative">
               {/* Game Board */}
               <div>
                 <header className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between mb-4">
@@ -662,6 +724,7 @@ export default function RoomPage() {
                       room={{ ...room, gameState }}
                       playerId={playerSession?.playerId ?? null}
                       onStateChange={handleStateChange}
+                      chatBubbles={animatedChatBubbles}
                     />
                   ) : (
                     <div className="min-h-[260px] flex items-center justify-center text-slate-500">
@@ -689,41 +752,47 @@ export default function RoomPage() {
                 )}
               </div>
 
-              {/* Chat */}
-              <div className="rounded-[32px] border border-white/20 bg-white/80 p-4">
-                <header className="flex items-center justify-between text-[10px] uppercase tracking-[0.5em] text-slate-900/70 mb-4">
-                  <span>Chat</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] uppercase tracking-[0.35em] text-slate-900/70">{connectionLabel}</span>
-                    <button
-                      type="button"
-                      onClick={handleChatToggle}
-                      className="rounded-full border border-white/60 bg-white/80 p-2 text-slate-900 transition hover:scale-105 cursor-pointer"
-                    >
-                      <MessageCircle className="h-4 w-4" />
-                    </button>
-                  </div>
-                </header>
-                <div className="flex-1 overflow-y-auto max-h-[300px] mb-4" ref={chatScrollRef}>
-                  {renderChatMessages(chatMessages)}
-                </div>
-                <form onSubmit={handleChatSubmit} className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={chatDraft}
-                    onChange={(event) => setChatDraft(event.target.value)}
-                    placeholder="Send a hint to your crew"
-                    className="flex-1 rounded-full border border-white/20 bg-white/80 px-4 py-2 text-sm text-slate-900 placeholder:text-slate-500 focus:border-white focus:outline-none"
-                  />
+              {/* Floating Chat Bubble */}
+              <div className="absolute bottom-4 right-4 z-30">
+                {!chatBubbleOpen ? (
                   <button
-                    type="submit"
-                    disabled={chatSending}
-                    className="rounded-full border border-slate-900/30 bg-slate-900/80 p-2 text-white transition hover:scale-105 disabled:opacity-40"
-                    aria-label="Send chat"
+                    type="button"
+                    onClick={() => setChatBubbleOpen(true)}
+                    className="rounded-full border border-white/60 bg-black/80 p-3 text-white shadow-lg transition hover:scale-105 cursor-pointer"
+                    aria-label="Open chat"
                   >
-                    <Send className="h-4 w-4" />
+                    <MessageCircle className="h-5 w-5" />
                   </button>
-                </form>
+                ) : (
+                  <div className="rounded-[20px] border border-white/20 bg-white/90 p-3 shadow-xl min-w-[280px] max-w-[320px]">
+                    <form onSubmit={handleChatSubmit} className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={chatDraft}
+                        onChange={(event) => setChatDraft(event.target.value)}
+                        placeholder="Send a hint to your crew"
+                        className="flex-1 rounded-full border border-white/20 bg-white/80 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-500 focus:border-white focus:outline-none"
+                        autoFocus
+                      />
+                      <button
+                        type="submit"
+                        disabled={chatSending}
+                        className="rounded-full border border-slate-900/30 bg-slate-900/80 p-2 text-white transition hover:scale-105 disabled:opacity-40"
+                        aria-label="Send chat"
+                      >
+                        <Send className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setChatBubbleOpen(false)}
+                        className="rounded-full border border-white/60 bg-white/60 p-2 text-slate-900 transition hover:scale-105"
+                        aria-label="Close chat"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </form>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -856,14 +925,19 @@ export default function RoomPage() {
 
       {chatSheetOpen && (
         <div
-          className="fixed inset-0 z-40 flex items-end justify-center bg-black/60 px-4 py-6"
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4 transition-opacity duration-300"
           onClick={(e) => {
             if (e.target === e.currentTarget) {
               handleChatToggle();
             }
           }}
         >
-          <div className="w-full max-w-md rounded-[42px] border-4 border-black/70 bg-white/80 p-0 shadow-[0_40px_70px_rgba(2,35,26,0.75)]">
+          <div className="w-full max-w-md rounded-[42px] border-4 border-black/70 bg-white/80 p-0 shadow-[0_40px_70px_rgba(2,35,26,0.75)] transition-all duration-300 scale-95 opacity-0"
+            style={{
+              transform: chatSheetOpen ? 'scale(1)' : 'scale(0.95)',
+              opacity: chatSheetOpen ? 1 : 0
+            }}
+          >
             <div className="rounded-[38px] border-2 border-black bg-gradient-to-b from-[#00d4c5] via-[#00b8ad] to-[#02a5a3] p-6">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold uppercase tracking-[0.4em] text-slate-900">
@@ -872,13 +946,13 @@ export default function RoomPage() {
                 <button
                   type="button"
                   onClick={handleChatToggle}
-                  className="rounded-full border border-white/60 bg-white/80 p-2 text-slate-900 cursor-pointer"
+                  className="rounded-full border border-white/60 bg-white/80 p-2 text-slate-900 cursor-pointer transition-transform hover:scale-105"
                   aria-label="Close chat"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <div className="mt-4 max-h-[60vh] overflow-y-auto space-y-3 text-sm">
+              <div className="mt-4 max-h-[60vh] overflow-y-auto space-y-3 text-sm custom-scrollbar">
                 {renderChatMessages(chatMessages)}
               </div>
               <form onSubmit={handleChatSubmit} className="mt-4 flex items-center gap-2">
