@@ -24,7 +24,7 @@ export async function GET(
     playerIds.length > 0
       ? await db.query.players.findMany({
           where: inArray(players.id, playerIds),
-        })
+        }) ?? []
       : [];
 
   const playerMap = playerRows.reduce<Record<string, string>>((acc, player) => {
