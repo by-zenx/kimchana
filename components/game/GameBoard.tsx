@@ -54,11 +54,11 @@ export function GameBoard({ room, playerId, onStateChange }: GameBoardProps) {
       </div>
 
       {/* Game Board Container */}
-      <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-6 backdrop-blur-sm">
+      <div className="bg-slate-950 rounded border-slate-700 p-4">
         <svg
           width={boardWidth}
           height={boardHeight}
-          className="bg-slate-950 rounded border border-slate-700"
+          className="bg-slate-950 rounded border-slate-700"
           style={{ minWidth: boardWidth, minHeight: boardHeight }}
         >
           {/* Render dots */}

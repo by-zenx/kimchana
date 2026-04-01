@@ -391,7 +391,14 @@ export function EntryPanel({ initialMode = 'join' }: EntryPanelProps) {
           </div>
         </div>
         {settingsOpen && (
-          <div className="absolute inset-0 z-40 flex items-end justify-center bg-black/60 px-4 py-6">
+          <div 
+            className="absolute inset-0 z-40 flex items-end justify-center bg-black/60 px-4 py-6"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                toggleSettings();
+              }
+            }}
+          >
             <div className="w-full max-w-sm rounded-[32px] border border-white/30 bg-slate-950/90 p-6 shadow-[0_40px_80px_rgba(0,0,0,0.65)]">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold uppercase tracking-[0.4em] text-white">
