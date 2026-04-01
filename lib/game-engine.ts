@@ -16,7 +16,13 @@ export class GameEngine {
   static deserializeState(payload: SerializedGameState): GameState {
     return {
       ...payload,
-      edges: new Set(payload.edges),
+      edges: new Set(payload.edges || []),
+      squares: payload.squares || [],
+      players: payload.players || [],
+      currentPlayerIndex: payload.currentPlayerIndex ?? 0,
+      status: payload.status || 'lobby',
+      moveHistory: payload.moveHistory || [],
+      winnerId: payload.winnerId ?? null,
     };
   }
 
@@ -230,7 +236,7 @@ export class GameEngine {
   }
 
   static resetGame(players: Player[], gridSize: { rows: number; cols: number }): GameState {
-    const resetPlayers = players.map((p) => ({ ...p, score: 0 }));
+    const resetPlayers = players.map((p) => ({ ...p, score: 0, isActive: true }));
     return this.createInitialState(gridSize, resetPlayers);
   }
 
@@ -251,6 +257,7 @@ export class GameEngine {
       color: PLAYER_COLORS[colorIdx % PLAYER_COLORS.length],
       score: 0,
       order,
+      isActive: true,
     };
   }
 }
