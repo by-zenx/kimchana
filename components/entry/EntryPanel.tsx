@@ -230,12 +230,9 @@ export function EntryPanel({ initialMode = 'join' }: EntryPanelProps) {
               <span className="text-[10px] tracking-[0.5em] text-slate-900/70">
                 D &amp; B
               </span>
-              <h1 className="text-4xl font-black uppercase tracking-[0.45em] text-slate-900 drop-shadow">
+              <h1 className="text-4xl font-black uppercase tracking-[0.45em] text-white drop-shadow">
                 WELCOME!
               </h1>
-              <p className="max-w-[220px] text-xs font-semibold text-slate-900/80">
-                Every lobby here is a dream, and we make dreams come true.
-              </p>
             </div>
 
             <div className="mt-6 flex items-center justify-center gap-2 text-[11px] uppercase tracking-[0.35em] text-slate-900/70">
@@ -359,11 +356,11 @@ export function EntryPanel({ initialMode = 'join' }: EntryPanelProps) {
               </Button>
             </form>
 
-            <p className="mt-4 text-center text-[11px] font-semibold uppercase tracking-[0.55em] text-slate-900/70">
+            <p className="mt-4 text-center text-[9px] font-semibold uppercase tracking-[0.55em] text-white">
               {helperText}
             </p>
             {alertText && (
-              <p className="mt-2 text-center text-[10px] font-semibold uppercase tracking-[0.4em] text-rose-100">
+              <p className="mt-2 text-center text-[10px] font-semibold uppercase tracking-[0.4em] text-red-200">
                 {alertText}
               </p>
             )}

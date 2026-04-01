@@ -45,12 +45,12 @@ export async function GET(
   const playerIds = [...new Set(messages.map((message) => message.player_id))];
   const playerRows =
     playerIds.length > 0
-      ? await db.query.players.findMany({
+      ? (await db.query.players.findMany({
           where: inArray(players.id, playerIds),
-        }) ?? []
+        })) ?? []
       : [];
 
-  const playerMap = playerRows.reduce<Record<string, string>>((acc, player) => {
+  const playerMap = (playerRows ?? []).reduce<Record<string, string>>((acc, player) => {
     acc[player.id] = player.name;
     return acc;
   }, {});

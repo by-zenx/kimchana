@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { chatMessages, players } from '@/db/schema';
 import { db } from '@/db';
 import { asc, eq, inArray } from 'drizzle-orm';
+import { broadcastToRoom } from '@/lib/socket';
 import { extractRoomIdFromRequest } from '@/lib/server-utils';
 
 export async function GET(
@@ -27,7 +28,7 @@ export async function GET(
         }) ?? []
       : [];
 
-  const playerMap = playerRows.reduce<Record<string, string>>((acc, player) => {
+  const playerMap = (playerRows ?? []).reduce<Record<string, string>>((acc, player) => {
     acc[player.id] = player.name;
     return acc;
   }, {});
@@ -42,4 +43,53 @@ export async function GET(
   }));
 
   return NextResponse.json({ chatMessages: payload });
+}
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: { roomId?: string } },
+) {
+  const roomId = extractRoomIdFromRequest(request, params);
+  if (!roomId) {
+    return NextResponse.json({ error: 'Missing room id' }, { status: 400 });
+  }
+
+  const { playerId, playerName, content } = await request.json().catch(() => ({}));
+  if (!playerId || !content) {
+    return NextResponse.json({ error: 'Missing chat payload' }, { status: 400 });
+  }
+
+  const player = await db.query.players.findFirst({
+    where: eq(players.id, playerId),
+  });
+  if (!player || player.room_id !== roomId) {
+    return NextResponse.json({ error: 'Player not found in room' }, { status: 400 });
+  }
+
+  const inserted = await db
+    .insert(chatMessages)
+    .values({
+      room_id: roomId,
+      player_id: playerId,
+      content,
+    })
+    .returning();
+
+  const messageRow = inserted[0];
+  if (!messageRow) {
+    return NextResponse.json({ error: 'Unable to store message' }, { status: 500 });
+  }
+
+  const formatted = {
+    id: messageRow.id,
+    roomId,
+    playerId,
+    playerName: playerName ?? player.name,
+    content: messageRow.content,
+    createdAt: messageRow.created_at.toISOString(),
+  };
+
+  broadcastToRoom(roomId, { type: 'chat', payload: formatted });
+
+  return NextResponse.json({ chatMessage: formatted });
 }
