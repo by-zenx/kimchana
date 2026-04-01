@@ -147,7 +147,6 @@ export function GameBoard({ room, onUpdateRoom }: GameBoardProps) {
                     />
                   )}
                 </g>
-              )
               );
             })
           )}
@@ -208,7 +207,6 @@ export function GameBoard({ room, onUpdateRoom }: GameBoardProps) {
                     />
                   )}
                 </g>
-              )
               );
             })
           )}
