@@ -431,6 +431,17 @@ function attachSocketHandlers(io: SocketIOServer) {
           return;
         }
 
+        const context = await getRoomStateContext(session.roomId);
+        if (!context) {
+          fail(ack, 'Room not found');
+          return;
+        }
+
+        if (context.room.status !== 'lobby') {
+          fail(ack, 'Color can only be changed in lobby');
+          return;
+        }
+
         const colorTaken = await db.query.players.findFirst({
           where: and(
             eq(players.room_id, session.roomId),
@@ -452,25 +463,22 @@ function attachSocketHandlers(io: SocketIOServer) {
           })
           .where(eq(players.id, session.player.id));
 
-        const context = await getRoomStateContext(session.roomId);
-        if (context) {
-          const nextState = {
-            ...context.gameState,
-            players: context.gameState.players.map((player) =>
-              player.id === session.player.id
-                ? { ...player, color }
-                : player,
-            ),
-          };
+        const nextState = {
+          ...context.gameState,
+          players: context.gameState.players.map((player) =>
+            player.id === session.player.id
+              ? { ...player, color }
+              : player,
+          ),
+        };
 
-          await db
-            .update(rooms)
-            .set({
-              game_state: GameEngine.serializeState(nextState) as SerializedGameState,
-              last_activity_at: new Date(),
-            })
-            .where(eq(rooms.id, session.roomId));
-        }
+        await db
+          .update(rooms)
+          .set({
+            game_state: GameEngine.serializeState(nextState) as SerializedGameState,
+            last_activity_at: new Date(),
+          })
+          .where(eq(rooms.id, session.roomId));
 
         await emitRoomSnapshot(io, session.roomId);
         ack?.({ ok: true });

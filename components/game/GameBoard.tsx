@@ -1,11 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Room } from '@/lib/types';
 import { GameEngine } from '@/lib/game-engine';
 import { GRID_SPACING, DOT_SIZE } from '@/lib/constants';
 
-// Add custom animation styles
 const customStyles = `
   @keyframes floatUp {
     0% {
@@ -13,12 +12,42 @@ const customStyles = `
       transform: translateY(0px) scale(1);
     }
     50% {
-      opacity: 0.8;
-      transform: translateY(-20px) scale(1.1);
+      opacity: 0.82;
+      transform: translateY(-20px) scale(1.08);
     }
     100% {
       opacity: 0;
-      transform: translateY(-50px) scale(0.8);
+      transform: translateY(-50px) scale(0.84);
+    }
+  }
+
+  @keyframes edgePulse {
+    0% {
+      opacity: 0.3;
+      transform: scale(0.98);
+    }
+    60% {
+      opacity: 1;
+      transform: scale(1.02);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes squarePop {
+    0% {
+      opacity: 0;
+      transform: scale(0.85);
+    }
+    70% {
+      opacity: 1;
+      transform: scale(1.03);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
     }
   }
 `;
@@ -27,11 +56,37 @@ interface GameBoardProps {
   room: Room;
   playerId: string | null;
   onMove?: (edgeKey: string) => void;
-  chatBubbles?: Array<{id: string, playerId: string, message: string, x?: number, y?: number}>;
+  chatBubbles?: Array<{ id: string; playerId: string; message: string; x?: number; y?: number }>;
+}
+
+type AvatarPosition = {
+  side: 'left' | 'right';
+  index: number;
+  playerIndex: number;
+};
+
+const BASE_EDGE_COLOR = 'rgba(186, 230, 253, 0.42)';
+
+function getAvatarPositions(playerCount: number): AvatarPosition[] {
+  const leftCount = Math.ceil(playerCount / 2);
+  const rightCount = playerCount - leftCount;
+  const positions: AvatarPosition[] = [];
+
+  for (let index = 0; index < leftCount; index += 1) {
+    positions.push({ side: 'left', index, playerIndex: index });
+  }
+  for (let index = 0; index < rightCount; index += 1) {
+    positions.push({
+      side: 'right',
+      index,
+      playerIndex: leftCount + index,
+    });
+  }
+
+  return positions;
 }
 
 export function GameBoard({ room, playerId, onMove, chatBubbles = [] }: GameBoardProps) {
-  // Inject custom styles
   useEffect(() => {
     const styleElement = document.createElement('style');
     styleElement.textContent = customStyles;
@@ -42,83 +97,125 @@ export function GameBoard({ room, playerId, onMove, chatBubbles = [] }: GameBoar
   }, []);
 
   const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
-  const { gridSize, edges, squares, players, currentPlayerIndex } = room.gameState;
-  
+  const [freshEdges, setFreshEdges] = useState<Record<string, true>>({});
+  const [freshSquares, setFreshSquares] = useState<Record<string, true>>({});
+  const previousEdgesRef = useRef<Set<string>>(new Set());
+  const previousSquareOwnersRef = useRef<Record<string, string | null>>({});
+
+  const { gridSize, edges, edgeOwners, squares, players, currentPlayerIndex } = room.gameState;
   const rows = gridSize.rows;
   const cols = gridSize.cols;
   const boardWidth = (cols - 1) * GRID_SPACING + DOT_SIZE * 2;
   const boardHeight = (rows - 1) * GRID_SPACING + DOT_SIZE * 2;
+  const currentPlayer = players[currentPlayerIndex] ?? players[0] ?? null;
+  const isPlaying = room.gameState.status === 'playing';
+  const isMyTurn = Boolean(currentPlayer && playerId && currentPlayer.id === playerId && isPlaying);
+  const activeColor = currentPlayer?.color ?? '#38bdf8';
 
-  const currentPlayer = players[currentPlayerIndex];
+  const playerById = useMemo(
+    () => new Map(players.map((player) => [player.id, player])),
+    [players],
+  );
 
-  // Calculate avatar positions around the board
-  const getAvatarPositions = (playerCount: number) => {
-    const positions: { side: 'left' | 'right'; index: number }[] = [];
-    
-    if (playerCount === 1) {
-      positions.push({ side: 'left', index: 0 });
-    } else if (playerCount === 2) {
-      positions.push({ side: 'left', index: 0 });
-      positions.push({ side: 'right', index: 0 });
-    } else if (playerCount === 3) {
-      positions.push({ side: 'left', index: 0 });
-      positions.push({ side: 'right', index: 0 });
-      positions.push({ side: 'right', index: 1 });
-    } else if (playerCount === 4) {
-      positions.push({ side: 'left', index: 0 });
-      positions.push({ side: 'left', index: 1 });
-      positions.push({ side: 'right', index: 0 });
-      positions.push({ side: 'right', index: 1 });
-    } else if (playerCount === 5) {
-      positions.push({ side: 'left', index: 0 });
-      positions.push({ side: 'left', index: 1 });
-      positions.push({ side: 'left', index: 2 });
-      positions.push({ side: 'right', index: 0 });
-      positions.push({ side: 'right', index: 1 });
-    } else if (playerCount === 6) {
-      positions.push({ side: 'left', index: 0 });
-      positions.push({ side: 'left', index: 1 });
-      positions.push({ side: 'left', index: 2 });
-      positions.push({ side: 'right', index: 0 });
-      positions.push({ side: 'right', index: 1 });
-      positions.push({ side: 'right', index: 2 });
-    } else if (playerCount === 7) {
-      positions.push({ side: 'left', index: 0 });
-      positions.push({ side: 'left', index: 1 });
-      positions.push({ side: 'left', index: 2 });
-      positions.push({ side: 'left', index: 3 });
-      positions.push({ side: 'right', index: 0 });
-      positions.push({ side: 'right', index: 1 });
-      positions.push({ side: 'right', index: 2 });
-    } else if (playerCount === 8) {
-      positions.push({ side: 'left', index: 0 });
-      positions.push({ side: 'left', index: 1 });
-      positions.push({ side: 'left', index: 2 });
-      positions.push({ side: 'left', index: 3 });
-      positions.push({ side: 'right', index: 0 });
-      positions.push({ side: 'right', index: 1 });
-      positions.push({ side: 'right', index: 2 });
-      positions.push({ side: 'right', index: 3 });
+  const avatarPositions = useMemo(
+    () => getAvatarPositions(players.length),
+    [players.length],
+  );
+
+  const edgeSignature = useMemo(
+    () => Array.from(edges).sort().join(','),
+    [edges],
+  );
+
+  const squareOwnerSignature = useMemo(
+    () =>
+      squares
+        .map((square) => `${square.topLeft[0]}-${square.topLeft[1]}:${square.ownerId ?? 'none'}`)
+        .join('|'),
+    [squares],
+  );
+
+  useEffect(() => {
+    const previous = previousEdgesRef.current;
+    const current = new Set(edges);
+    const addedEdges = Array.from(current).filter((edgeKey) => !previous.has(edgeKey));
+    previousEdgesRef.current = current;
+
+    if (addedEdges.length === 0) {
+      return;
     }
-    
-    return positions;
-  };
 
-  const avatarPositions = getAvatarPositions(players.length);
-  const avatarSize = 60;
-  const avatarSpacing = 80;
+    setFreshEdges((prev) => {
+      const next = { ...prev };
+      addedEdges.forEach((edgeKey) => {
+        next[edgeKey] = true;
+      });
+      return next;
+    });
+
+    const timeout = window.setTimeout(() => {
+      setFreshEdges((prev) => {
+        const next = { ...prev };
+        addedEdges.forEach((edgeKey) => {
+          delete next[edgeKey];
+        });
+        return next;
+      });
+    }, 420);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [edgeSignature, edges]);
+
+  useEffect(() => {
+    const previousOwners = previousSquareOwnersRef.current;
+    const newlyClaimed: string[] = [];
+
+    squares.forEach((square) => {
+      const key = `${square.topLeft[0]}-${square.topLeft[1]}`;
+      const previousOwner = previousOwners[key] ?? null;
+      if (!previousOwner && square.ownerId) {
+        newlyClaimed.push(key);
+      }
+      previousOwners[key] = square.ownerId;
+    });
+
+    if (newlyClaimed.length === 0) {
+      return;
+    }
+
+    setFreshSquares((prev) => {
+      const next = { ...prev };
+      newlyClaimed.forEach((key) => {
+        next[key] = true;
+      });
+      return next;
+    });
+
+    const timeout = window.setTimeout(() => {
+      setFreshSquares((prev) => {
+        const next = { ...prev };
+        newlyClaimed.forEach((key) => {
+          delete next[key];
+        });
+        return next;
+      });
+    }, 520);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [squareOwnerSignature, squares]);
+
+  useEffect(() => {
+    if (!isMyTurn) {
+      setHoveredEdge(null);
+    }
+  }, [isMyTurn]);
 
   const handleEdgeClick = (edgeKey: string) => {
-    if (!playerId) {
-      return;
-    }
-
-    if (room.gameState.status !== 'playing') {
-      return;
-    }
-
-    const activePlayer = room.gameState.players[room.gameState.currentPlayerIndex];
-    if (!activePlayer || activePlayer.id !== playerId) {
+    if (!isMyTurn) {
       return;
     }
 
@@ -129,313 +226,303 @@ export function GameBoard({ room, playerId, onMove, chatBubbles = [] }: GameBoar
     onMove?.(edgeKey);
   };
 
+  const renderEdge = (
+    edgeKey: string,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    renderKey: string,
+  ) => {
+    const isClaimed = edges.has(edgeKey);
+    const canInteract = isMyTurn && !isClaimed;
+    const isHovered = canInteract && hoveredEdge === edgeKey;
+    const ownerId = edgeOwners[edgeKey];
+    const ownerColor = ownerId ? playerById.get(ownerId)?.color : null;
+    const stroke = isClaimed
+      ? ownerColor ?? '#60a5fa'
+      : isHovered
+        ? activeColor
+        : BASE_EDGE_COLOR;
+    const strokeWidth = isClaimed ? 6 : isHovered ? 5 : 3;
+    const isFresh = Boolean(freshEdges[edgeKey]);
+
+    return (
+      <g key={renderKey}>
+        <line
+          x1={x1}
+          y1={y1}
+          x2={x2}
+          y2={y2}
+          stroke={stroke}
+          strokeWidth={strokeWidth}
+          strokeLinecap="round"
+          pointerEvents="none"
+          className={isFresh ? 'animate-[edgePulse_320ms_ease-out]' : undefined}
+          style={{
+            opacity: isHovered && !isClaimed ? 0.95 : 1,
+            filter: isHovered
+              ? `drop-shadow(0 0 8px ${activeColor})`
+              : isClaimed
+                ? `drop-shadow(0 0 6px ${stroke}88)`
+                : 'none',
+            transition: 'stroke 140ms ease, stroke-width 140ms ease, opacity 140ms ease, filter 140ms ease',
+          }}
+        />
+        {!isClaimed && (
+          <line
+            x1={x1}
+            y1={y1}
+            x2={x2}
+            y2={y2}
+            stroke="transparent"
+            strokeWidth={16}
+            strokeLinecap="round"
+            className={canInteract ? 'cursor-pointer' : 'cursor-not-allowed'}
+            onMouseEnter={() => {
+              if (canInteract) {
+                setHoveredEdge(edgeKey);
+              }
+            }}
+            onMouseLeave={() => {
+              if (hoveredEdge === edgeKey) {
+                setHoveredEdge(null);
+              }
+            }}
+            onClick={() => {
+              if (canInteract) {
+                handleEdgeClick(edgeKey);
+              }
+            }}
+          />
+        )}
+      </g>
+    );
+  };
+
+  if (!currentPlayer) {
+    return (
+      <div className="flex min-h-[280px] items-center justify-center text-sm text-slate-500">
+        Waiting for players to join...
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col items-center justify-center gap-4">
-      <div className="text-center mb-4">
-        <h2 className="text-xl font-semibold text-slate-200">
-          <span style={{ color: currentPlayer.color }}>
+      <div className="mb-4 text-center">
+        <h2 className="text-xl font-semibold text-white">
+          <span style={{ color: activeColor }}>
             {currentPlayer.name}&apos;s Turn
           </span>
         </h2>
-        <p className="text-sm text-slate-400 mt-1">
-          Click edges to claim them
+        <p className="mt-1 text-sm text-slate-200/90">
+          {isMyTurn ? 'Your move - claim an edge.' : 'Watch the board update live.'}
         </p>
       </div>
 
       {/* Game Board with Avatars Around */}
-      <div className="flex items-center justify-center gap-6">
-        {/* Left side avatars */}
+      <div className="relative flex items-center justify-center gap-6">
         <div className="flex flex-col gap-4">
           {avatarPositions
-            .filter(pos => pos.side === 'left')
-            .sort((a, b) => a.index - b.index)
-            .map((pos, idx) => {
-              const player = players[idx];
+            .filter((position) => position.side === 'left')
+            .map((position) => {
+              const player = players[position.playerIndex];
+              if (!player) {
+                return null;
+              }
+              const isActiveTurn = isPlaying && currentPlayer.id === player.id;
               return (
-                <div
-                  key={`avatar-left-${idx}`}
-                  className="flex flex-col items-center"
-                  style={{ height: avatarSize }}
-                >
+                <div key={`avatar-left-${player.id}`} className="flex min-h-[74px] flex-col items-center justify-center">
                   <div
-                    className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg transition-transform hover:scale-110"
-                    style={{ backgroundColor: player.color }}
+                    className={`flex h-12 w-12 items-center justify-center rounded-full text-lg font-bold text-white shadow-lg transition-transform ${
+                      isActiveTurn ? 'scale-105 ring-4 ring-white/70' : 'ring-2 ring-white/25'
+                    }`}
+                    style={{
+                      backgroundColor: player.color,
+                      boxShadow: isActiveTurn
+                        ? `0 0 0 4px ${player.color}55, 0 0 18px ${player.color}88`
+                        : undefined,
+                    }}
                   >
                     {player.name.charAt(0).toUpperCase()}
                   </div>
-                  <span 
-                    className="text-xs mt-1 font-medium text-center max-w-[60px] truncate"
-                    style={{ color: player.color }}
-                  >
+                  <span className="mt-1 max-w-[72px] truncate text-xs font-medium text-white">
                     {player.name}
+                  </span>
+                  <span className="text-[11px] font-semibold text-white/85">
+                    {player.score} pts
                   </span>
                 </div>
               );
             })}
         </div>
 
-        {/* Game Board Container */}
-        <div className="bg-slate-950 rounded border-slate-700 p-4">
+        <div className="rounded-2xl border border-cyan-200/30 bg-[#061532] p-4 shadow-[0_20px_45px_rgba(4,11,35,0.65)]">
           <svg
             width={boardWidth}
             height={boardHeight}
-            className="bg-slate-950 rounded border-slate-700"
+            className="rounded-xl"
             style={{ minWidth: boardWidth, minHeight: boardHeight }}
           >
-            {/* Render dots */}
-            {Array.from({ length: rows }).map((_, r) =>
-              Array.from({ length: cols }).map((_, c) => {
-                const x = DOT_SIZE / 2 + c * GRID_SPACING;
-                const y = DOT_SIZE / 2 + r * GRID_SPACING;
-                return (
-                  <circle
-                    key={`dot-${r}-${c}`}
-                    cx={x}
-                    cy={y}
-                    r={DOT_SIZE / 2}
-                    fill="#64748b"
-                    className="transition-all"
-                  />
-                );
-              })
-            )}
+            <defs>
+              <linearGradient id="boardGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#051129" />
+                <stop offset="100%" stopColor="#071d42" />
+              </linearGradient>
+            </defs>
 
-            {/* Render horizontal edges */}
-            {Array.from({ length: rows }).map((_, r) =>
-              Array.from({ length: cols - 1 }).map((_, c) => {
-                const edgeKey = GameEngine.normalizeEdgeKey(r, c, r, c + 1);
-                const isExisting = edges.has(edgeKey);
-                const isHovered = hoveredEdge === edgeKey;
-                const x1 = DOT_SIZE / 2 + c * GRID_SPACING;
-                const y1 = DOT_SIZE / 2 + r * GRID_SPACING;
-                const x2 = DOT_SIZE / 2 + (c + 1) * GRID_SPACING;
-                const y2 = y1;
+            <rect x={0} y={0} width={boardWidth} height={boardHeight} rx={14} fill="url(#boardGradient)" />
 
-                const edgeOwner = isExisting
-                  ? room.gameState.players.find(
-                      (p) =>
-                        room.gameState.squares.some(
-                          (sq) => sq.ownerId === p.id
-                        )
-                    )
-                  : null;
-
-                let strokeColor = '#475569';
-                let strokeWidth = 3;
-
-                if (isExisting) {
-                  strokeColor = currentPlayer.color;
-                  strokeWidth = 4;
-                } else if (isHovered) {
-                  strokeColor = currentPlayer.color;
-                  strokeWidth = 4;
-                }
-
-                return (
-                  <g key={`edge-h-${r}-${c}`}>
-                    <line
-                      x1={x1}
-                      y1={y1}
-                      x2={x2}
-                      y2={y2}
-                      stroke={strokeColor}
-                      strokeWidth={strokeWidth}
-                      className={`transition-all ${
-                        !isExisting ? 'cursor-pointer hover:drop-shadow-lg' : ''
-                      }`}
-                      opacity={isHovered && !isExisting ? 0.8 : 1}
-                      onMouseEnter={() =>
-                        !isExisting && setHoveredEdge(edgeKey)
-                      }
-                      onMouseLeave={() => setHoveredEdge(null)}
-                      onClick={() => !isExisting && handleEdgeClick(edgeKey)}
-                      style={{
-                        filter: isHovered && !isExisting ? `drop-shadow(0 0 8px ${currentPlayer.color})` : 'drop-shadow(0 0 0px transparent)',
-                        transition: 'filter 0.2s ease-out'
-                      }}
-                    />
-                    {isHovered && !isExisting && (
-                      <circle
-                        cx={(x1 + x2) / 2}
-                        cy={(y1 + y2) / 2}
-                        r="6"
-                        fill={currentPlayer.color}
-                        opacity="0.3"
-                        className="animate-pulse"
-                      />
-                    )}
-                  </g>
-                );
-              })
-            )}
-
-            {/* Render vertical edges */}
-            {Array.from({ length: rows - 1 }).map((_, r) =>
-              Array.from({ length: cols }).map((_, c) => {
-                const edgeKey = GameEngine.normalizeEdgeKey(r, c, r + 1, c);
-                const isExisting = edges.has(edgeKey);
-                const isHovered = hoveredEdge === edgeKey;
-                const x1 = DOT_SIZE / 2 + c * GRID_SPACING;
-                const y1 = DOT_SIZE / 2 + r * GRID_SPACING;
-                const x2 = x1;
-                const y2 = DOT_SIZE / 2 + (r + 1) * GRID_SPACING;
-
-                let strokeColor = '#475569';
-                let strokeWidth = 3;
-
-                if (isExisting) {
-                  strokeColor = currentPlayer.color;
-                  strokeWidth = 4;
-                } else if (isHovered) {
-                  strokeColor = currentPlayer.color;
-                  strokeWidth = 4;
-                }
-
-                return (
-                  <g key={`edge-v-${r}-${c}`}>
-                    <line
-                      x1={x1}
-                      y1={y1}
-                      x2={x2}
-                      y2={y2}
-                      stroke={strokeColor}
-                      strokeWidth={strokeWidth}
-                      className={`transition-all ${
-                        !isExisting ? 'cursor-pointer hover:drop-shadow-lg' : ''
-                      }`}
-                      opacity={isHovered && !isExisting ? 0.8 : 1}
-                      onMouseEnter={() =>
-                        !isExisting && setHoveredEdge(edgeKey)
-                      }
-                      onMouseLeave={() => setHoveredEdge(null)}
-                      onClick={() => !isExisting && handleEdgeClick(edgeKey)}
-                      style={{
-                        filter: isHovered && !isExisting ? `drop-shadow(0 0 8px ${currentPlayer.color})` : 'drop-shadow(0 0 0px transparent)',
-                        transition: 'filter 0.2s ease-out'
-                      }}
-                    />
-                    {isHovered && !isExisting && (
-                      <circle
-                        cx={x1}
-                        cy={(y1 + y2) / 2}
-                        r="6"
-                        fill={currentPlayer.color}
-                        opacity="0.3"
-                        className="animate-pulse"
-                      />
-                    )}
-                  </g>
-                );
-              })
-            )}
-
-            {/* Render completed squares */}
-            {squares.map((square, idx) => {
-              if (!square.ownerId) return null;
-
+            {squares.map((square) => {
               const [row, col] = square.topLeft;
-              const owner = players.find((p) => p.id === square.ownerId);
-              if (!owner) return null;
-
-              const x = DOT_SIZE / 2 + col * GRID_SPACING;
-              const y = DOT_SIZE / 2 + row * GRID_SPACING;
-              const size = GRID_SPACING - 2;
+              const owner = square.ownerId ? playerById.get(square.ownerId) : null;
+              const x = DOT_SIZE / 2 + col * GRID_SPACING + 2;
+              const y = DOT_SIZE / 2 + row * GRID_SPACING + 2;
+              const size = GRID_SPACING - 4;
+              const squareKey = `${row}-${col}`;
+              const isFreshSquare = Boolean(freshSquares[squareKey]);
 
               return (
-                <g key={`square-${idx}`}>
+                <g key={`square-${squareKey}`}>
                   <rect
-                    x={x + 2}
-                    y={y + 2}
+                    x={x}
+                    y={y}
                     width={size}
                     height={size}
-                    fill={owner.color}
-                    opacity="0.2"
-                    className="animate-pulse"
+                    rx={6}
+                    className={isFreshSquare ? 'animate-[squarePop_360ms_ease-out]' : undefined}
+                    style={{
+                      fill: owner?.color ?? '#000000',
+                      opacity: owner ? 0.28 : 0,
+                      transform: owner ? 'scale(1)' : 'scale(0.9)',
+                      transformOrigin: `${x + size / 2}px ${y + size / 2}px`,
+                      transition: 'fill 220ms ease, opacity 220ms ease, transform 220ms ease',
+                    }}
                   />
-                  <text
-                    x={x + size / 2}
-                    y={y + size / 2 + 4}
-                    textAnchor="middle"
-                    fill={owner.color}
-                    fontSize="14"
-                    fontWeight="bold"
-                    opacity="0.7"
-                  >
-                    P{owner.order + 1}
-                  </text>
+                  {owner && (
+                    <text
+                      x={x + size / 2}
+                      y={y + size / 2 + 4}
+                      textAnchor="middle"
+                      fill={owner.color}
+                      fontSize="13"
+                      fontWeight="bold"
+                      style={{ opacity: 0.9 }}
+                    >
+                      P{owner.order + 1}
+                    </text>
+                  )}
                 </g>
               );
             })}
+
+            {Array.from({ length: rows }).map((_, row) =>
+              Array.from({ length: cols - 1 }).map((_, col) => {
+                const edgeKey = GameEngine.normalizeEdgeKey(row, col, row, col + 1);
+                const x1 = DOT_SIZE / 2 + col * GRID_SPACING;
+                const y1 = DOT_SIZE / 2 + row * GRID_SPACING;
+                const x2 = DOT_SIZE / 2 + (col + 1) * GRID_SPACING;
+                const y2 = y1;
+                return renderEdge(edgeKey, x1, y1, x2, y2, `edge-h-${row}-${col}`);
+              }),
+            )}
+
+            {Array.from({ length: rows - 1 }).map((_, row) =>
+              Array.from({ length: cols }).map((_, col) => {
+                const edgeKey = GameEngine.normalizeEdgeKey(row, col, row + 1, col);
+                const x1 = DOT_SIZE / 2 + col * GRID_SPACING;
+                const y1 = DOT_SIZE / 2 + row * GRID_SPACING;
+                const x2 = x1;
+                const y2 = DOT_SIZE / 2 + (row + 1) * GRID_SPACING;
+                return renderEdge(edgeKey, x1, y1, x2, y2, `edge-v-${row}-${col}`);
+              }),
+            )}
+
+            {Array.from({ length: rows }).map((_, row) =>
+              Array.from({ length: cols }).map((_, col) => {
+                const x = DOT_SIZE / 2 + col * GRID_SPACING;
+                const y = DOT_SIZE / 2 + row * GRID_SPACING;
+                return (
+                  <circle
+                    key={`dot-${row}-${col}`}
+                    cx={x}
+                    cy={y}
+                    r={DOT_SIZE / 2}
+                    fill="#dbeafe"
+                    stroke="#7dd3fc"
+                    strokeWidth={1}
+                  />
+                );
+              }),
+            )}
           </svg>
         </div>
 
-        {/* Right side avatars */}
         <div className="flex flex-col gap-4">
           {avatarPositions
-            .filter(pos => pos.side === 'right')
-            .sort((a, b) => a.index - b.index)
-            .map((pos, idx) => {
-              const leftCount = avatarPositions.filter(p => p.side === 'left').length;
-              const playerIndex = leftCount + idx;
-              const player = players[playerIndex];
+            .filter((position) => position.side === 'right')
+            .map((position) => {
+              const player = players[position.playerIndex];
+              if (!player) {
+                return null;
+              }
+              const isActiveTurn = isPlaying && currentPlayer.id === player.id;
               return (
-                <div
-                  key={`avatar-right-${idx}`}
-                  className="flex flex-col items-center"
-                  style={{ height: avatarSize }}
-                >
+                <div key={`avatar-right-${player.id}`} className="flex min-h-[74px] flex-col items-center justify-center">
                   <div
-                    className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg transition-transform hover:scale-110"
-                    style={{ backgroundColor: player.color }}
+                    className={`flex h-12 w-12 items-center justify-center rounded-full text-lg font-bold text-white shadow-lg transition-transform ${
+                      isActiveTurn ? 'scale-105 ring-4 ring-white/70' : 'ring-2 ring-white/25'
+                    }`}
+                    style={{
+                      backgroundColor: player.color,
+                      boxShadow: isActiveTurn
+                        ? `0 0 0 4px ${player.color}55, 0 0 18px ${player.color}88`
+                        : undefined,
+                    }}
                   >
                     {player.name.charAt(0).toUpperCase()}
                   </div>
-                  <span 
-                    className="text-xs mt-1 font-medium text-center max-w-[60px] truncate"
-                    style={{ color: player.color }}
-                  >
+                  <span className="mt-1 max-w-[72px] truncate text-xs font-medium text-white">
                     {player.name}
+                  </span>
+                  <span className="text-[11px] font-semibold text-white/85">
+                    {player.score} pts
                   </span>
                 </div>
               );
             })}
         </div>
 
-        {/* Chat Bubbles near Avatars */}
         {chatBubbles.map((bubble) => {
-          const player = players.find((p) => p.id === bubble.playerId);
-          const playerIndex = players.findIndex((p) => p.id === bubble.playerId);
-          if (!player || playerIndex === -1) return null;
-
-          // Calculate position based on avatar position
-          const avatarPositions = getAvatarPositions(players.length);
-          const playerPos = avatarPositions[playerIndex];
-          if (!playerPos) return null;
-
-          let bubbleX = 0;
-          let bubbleY = 0;
-
-          if (playerPos.side === 'left') {
-            bubbleX = 60; // Near left avatars
-            bubbleY = 100 + playerPos.index * 80;
-          } else {
-            bubbleX = boardWidth + 100; // Near right avatars
-            bubbleY = 100 + playerPos.index * 80;
+          const playerIndex = players.findIndex((player) => player.id === bubble.playerId);
+          if (playerIndex < 0) {
+            return null;
           }
+          const player = players[playerIndex];
+          const avatarPosition = avatarPositions.find((position) => position.playerIndex === playerIndex);
+          if (!avatarPosition) {
+            return null;
+          }
+
+          const baseY = 62 + avatarPosition.index * 86;
+          const baseX = avatarPosition.side === 'left'
+            ? 64
+            : boardWidth + 172;
 
           return (
             <div
               key={bubble.id}
-              className="absolute pointer-events-none animate-bounce"
+              className="pointer-events-none absolute"
               style={{
-                left: `${bubbleX}px`,
-                top: `${bubbleY}px`,
+                left: `${baseX}px`,
+                top: `${baseY}px`,
                 animation: 'floatUp 3s ease-out forwards',
-                zIndex: 50
+                zIndex: 50,
               }}
             >
-              <div 
-                className="rounded-full px-3 py-2 text-white text-sm shadow-lg max-w-[200px] wrap-break-word"
+              <div
+                className="max-w-[190px] rounded-full px-3 py-2 text-sm text-white shadow-lg"
                 style={{ backgroundColor: player.color }}
               >
                 {bubble.message}
@@ -445,9 +532,9 @@ export function GameBoard({ room, playerId, onMove, chatBubbles = [] }: GameBoar
         })}
       </div>
 
-      {/* Move Counter */}
-      <div className="text-sm text-slate-400">
-        Moves played: <span className="text-blue-400 font-semibold">{room.gameState.moveHistory.length}</span>
+      <div className="text-sm text-slate-200/90">
+        Moves played:{' '}
+        <span className="font-semibold text-cyan-200">{room.gameState.moveHistory.length}</span>
       </div>
     </div>
   );

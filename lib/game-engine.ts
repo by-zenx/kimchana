@@ -17,6 +17,7 @@ export class GameEngine {
     return {
       ...payload,
       edges: new Set(payload.edges || []),
+      edgeOwners: payload.edgeOwners ?? {},
       squares: payload.squares || [],
       players: payload.players || [],
       currentPlayerIndex: payload.currentPlayerIndex ?? 0,
@@ -33,6 +34,7 @@ export class GameEngine {
     return {
       gridSize,
       edges: new Set<EdgeKey>(),
+      edgeOwners: {},
       squares: this.initializeSquares(gridSize),
       players,
       currentPlayerIndex: 0,
@@ -170,6 +172,10 @@ export class GameEngine {
     // Add edge
     const newEdges = new Set(state.edges);
     newEdges.add(edgeKey);
+    const newEdgeOwners = {
+      ...state.edgeOwners,
+      [edgeKey]: playerId,
+    };
 
     // Check for completed squares
     const adjacentSquares = this.getAdjacentSquares(edgeKey, state.gridSize);
@@ -217,6 +223,7 @@ export class GameEngine {
     const newState: GameState = {
       ...state,
       edges: newEdges,
+      edgeOwners: newEdgeOwners,
       squares: newSquares,
       players: newPlayers,
       currentPlayerIndex: nextPlayerIndex,

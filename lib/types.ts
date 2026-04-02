@@ -18,6 +18,7 @@ export interface Square {
 export interface GameState {
   gridSize: { rows: number; cols: number };
   edges: Set<EdgeKey>;
+  edgeOwners: Record<EdgeKey, string>;
   squares: Square[];
   players: Player[];
   currentPlayerIndex: number;

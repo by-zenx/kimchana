@@ -12,7 +12,9 @@ import { RoomSnapshot, RealtimeAck } from '@/lib/realtime/types';
 import {
   Clock3,
   Copy,
+  Crown,
   Info,
+  Lock,
   MessageCircle,
   Send,
   Settings2,
@@ -285,7 +287,6 @@ export default function RoomPage() {
 
       const socket = io({
         path: '/api/socketio',
-        transports: ['websocket'],
       });
 
       socketRef.current = socket;
@@ -530,14 +531,25 @@ export default function RoomPage() {
       : 'Lobby';
   const isPlaying = room?.status === 'playing';
   const isWaiting = room?.status === 'lobby';
+  const isFinished = room?.status === 'finished';
   const isHostPlayer = Boolean(
     playerSession?.playerId &&
     room?.hostId &&
     playerSession.playerId === room.hostId,
   );
   const canEditSettings = isHostPlayer && isWaiting;
+  const canChangeColor = isWaiting;
   const showGameInfo = isWaiting || !isPlaying;
   const playerCountText = `${room?.players.length ?? 0}/${room?.playerCount ?? 2} Players`;
+  const rankedPlayers = useMemo(() => {
+    const playersToRank = gameState?.players ?? room?.players ?? [];
+    return [...playersToRank].sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+      return a.order - b.order;
+    });
+  }, [gameState?.players, room?.players]);
 
   const handleCopyRoomId = useCallback(async () => {
     if (!roomId) {
@@ -561,21 +573,6 @@ export default function RoomPage() {
     setSettingsOpen((prev) => !prev);
   }, [canEditSettings]);
 
-  const handleSettingsButtonClick = useCallback(() => {
-    if (canEditSettings) {
-      handleSettingsToggle();
-      return;
-    }
-    if (isPlaying) {
-      setSettingsOpen(true);
-    }
-  }, [canEditSettings, handleSettingsToggle, isPlaying]);
-
-  const handleInfoToggle = useCallback(() => {
-    setSettingsOpen(false);
-    setInfoOpen((prev) => !prev);
-  }, []);
-
   const handleChatToggle = useCallback(() => {
     setChatSheetOpen((prev) => !prev);
   }, []);
@@ -583,6 +580,19 @@ export default function RoomPage() {
   const handlePlayerListToggle = useCallback(() => {
     setPlayersModalOpen((prev) => !prev);
   }, []);
+
+  useEffect(() => {
+    if (!canEditSettings && settingsOpen) {
+      setSettingsOpen(false);
+    }
+  }, [canEditSettings, settingsOpen]);
+
+  useEffect(() => {
+    if (canChangeColor) {
+      return;
+    }
+    document.querySelectorAll('[id^="palette-"]').forEach((element) => element.remove());
+  }, [canChangeColor]);
 
   const handleSettingsApply = () => {
     if (!canEditSettings) {
@@ -727,14 +737,15 @@ export default function RoomPage() {
                       <Settings2 className="h-4 w-4" />
                     </button>
                   )}
-                  {!canEditSettings && isPlaying && (
+                  {isHostPlayer && !canEditSettings && (
                     <button
                       type="button"
-                      onClick={() => setSettingsOpen(true)}
-                      className="rounded-full border border-white/80 bg-black/80 p-2 text-white transition hover:scale-105 cursor-pointer opacity-60"
-                      aria-label="View room settings"
+                      disabled
+                      className="rounded-full border border-white/30 bg-black/60 p-2 text-white/50 opacity-70 cursor-not-allowed"
+                      aria-label="Settings locked"
+                      title="Settings lock once the game starts"
                     >
-                      <Settings2 className="h-4 w-4" />
+                      <Lock className="h-4 w-4" />
                     </button>
                   )}
                 </>
@@ -819,6 +830,39 @@ export default function RoomPage() {
                     Waiting for host to start match
                   </p>
                 )}
+                {isFinished && rankedPlayers.length > 0 && (
+                  <div className="mt-6 rounded-[28px] border border-white/30 bg-black/55 p-5 shadow-[0_20px_35px_rgba(0,0,0,0.35)]">
+                    <div className="flex items-center gap-2 text-white">
+                      <Crown className="h-4 w-4 text-yellow-300" />
+                      <p className="text-xs font-semibold uppercase tracking-[0.35em]">
+                        Final Standings
+                      </p>
+                    </div>
+                    <div className="mt-4 space-y-2">
+                      {rankedPlayers.map((player, index) => (
+                        <div
+                          key={player.id}
+                          className={`flex items-center justify-between rounded-full border px-4 py-2 text-sm ${
+                            index === 0
+                              ? 'border-yellow-300/70 bg-yellow-300/20 text-yellow-100'
+                              : 'border-white/20 bg-white/10 text-white'
+                          }`}
+                        >
+                          <span className="font-semibold tracking-[0.2em]">
+                            #{index + 1} {player.name}
+                          </span>
+                          <span className="font-bold">{player.score} pts</span>
+                        </div>
+                      ))}
+                    </div>
+                    <a
+                      href="/"
+                      className="mt-4 inline-flex w-full items-center justify-center rounded-full border border-white/40 bg-white/20 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.35em] text-white transition hover:bg-white/30"
+                    >
+                      Exit Room
+                    </a>
+                  </div>
+                )}
               </div>
 
               {/* Floating Chat Bubble */}
@@ -894,43 +938,51 @@ export default function RoomPage() {
             </div>
 
             <div className="mt-5 space-y-3">
-              {room?.players.map((player) => (
-                <>
-                  <div key={player.id} className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <span className="h-4 w-4 rounded-full" style={{ backgroundColor: player.color }} />
-                      <div>
-                        <p className="text-sm font-semibold text-white">
-                          {player.name}
-                        </p>
-                        <p className="text-[10px] uppercase tracking-[0.4em] text-white/70">
-                          P{player.order + 1} • {player.id === room?.hostId ? 'Host' : 'Guest'}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="relative">
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          // Toggle color palette for this player
-                          const paletteId = `palette-${player.id}`;
-                          const existingPalette = document.getElementById(paletteId);
-                          if (existingPalette) {
-                            existingPalette.remove();
-                          } else {
-                            // Remove any existing palettes first
-                            document.querySelectorAll('[id^="palette-"]').forEach(el => el.remove());
+              {room?.players.map((player) => {
+                const canChangeThisColor =
+                  canChangeColor &&
+                  player.id === playerSession?.playerId;
 
-                            // Create color palette
+                return (
+                  <div key={player.id} className="space-y-6">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <span className="h-4 w-4 rounded-full" style={{ backgroundColor: player.color }} />
+                        <div>
+                          <p className="text-sm font-semibold text-white">
+                            {player.name}
+                          </p>
+                          <p className="text-[10px] uppercase tracking-[0.4em] text-white/70">
+                            P{player.order + 1} - {player.id === room?.hostId ? 'Host' : 'Guest'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            const paletteId = `palette-${player.id}`;
+                            const existingPalette = document.getElementById(paletteId);
+                            if (existingPalette) {
+                              existingPalette.remove();
+                              return;
+                            }
+
+                            if (!canChangeThisColor) {
+                              return;
+                            }
+
+                            document.querySelectorAll('[id^="palette-"]').forEach((el) => el.remove());
+
                             const palette = document.createElement('div');
                             palette.id = paletteId;
                             palette.className = 'absolute left-0 top-full mt-2 bg-slate-900/95 rounded-lg p-3 border border-white/20 shadow-lg z-50 min-w-[200px]';
 
                             const colors = ['#ef4444', '#f97316', '#eab308', '#84cc16', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6', '#6366f1', '#a855f7', '#ec4899', '#f43f5e'];
                             const colorButtons = colors.map((color) => {
-                              const isTaken = room.players.some(p => p.id !== player.id && p.color === color);
+                              const isTaken = room.players.some((p) => p.id !== player.id && p.color === color);
                               const isCurrent = player.color === color;
-                              const takenBy = room.players.find(p => p.color === color);
+                              const takenBy = room.players.find((p) => p.color === color);
                               return '<div class="relative group">' +
                                 '<button ' +
                                 'class="w-6 h-6 rounded-full transition-all ' +
@@ -939,9 +991,9 @@ export default function RoomPage() {
                                   : 'hover:scale-110') + '"' +
                                 ' style="background-color: ' + color + ';' +
                                 (isCurrent ? 'box-shadow: 0 0 0 2px #1e293b, 0 0 0 4px white;' : '') + '"' +
-                                (player.id === playerSession?.playerId && !isTaken && !isCurrent
+                                (!isTaken && !isCurrent
                                   ? ' onclick="window.changePlayerColor(\'' + color + '\')"'
-                                  : isTaken || isCurrent ? ' disabled' : '') +
+                                  : ' disabled') +
                                 ' title="' + (isTaken ? 'Taken by ' + (takenBy?.name || 'another player') : isCurrent ? 'Your current color' : 'Available - Click to select') + '"' +
                                 '/>' +
                                 (isTaken && !isCurrent
@@ -955,38 +1007,45 @@ export default function RoomPage() {
 
                             palette.innerHTML =
                               '<div class="text-[11px] font-semibold text-white mb-3 text-center">' +
-                              (player.id === playerSession?.playerId ? 'Choose Your Color' : 'Player Colors') +
+                              'Choose Your Color' +
                               '</div>' +
                               '<div class="grid grid-cols-6 gap-2 mb-3">' +
                               colorButtons +
                               '</div>' +
                               '<div class="text-[9px] text-white/60 text-center">' +
-                              (player.id === playerSession?.playerId ? 'Click an available color' : 'Viewing only') +
+                              'Color change is available in lobby only' +
                               '</div>';
 
-                            // Position palette inset of the button
                             event.currentTarget.parentElement?.appendChild(palette);
-                          }
-                        }}
-                        className={`px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.35em] rounded-full border transition cursor-pointer ${player.id === playerSession?.playerId
-                          ? 'border-white/40 bg-white/20 text-white hover:bg-white/30'
-                          : 'border-white/20 bg-white/10 text-white/60 cursor-not-allowed'}`}
-                        disabled={player.id !== playerSession?.playerId}
-                      >
-                        {player.id === playerSession?.playerId ? 'Change' : 'View'}
-                      </button>
+                          }}
+                          className={`px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.35em] rounded-full border transition ${
+                            canChangeThisColor
+                              ? 'border-white/40 bg-white/20 text-white hover:bg-white/30 cursor-pointer'
+                              : player.id === playerSession?.playerId
+                                ? 'border-white/20 bg-white/10 text-white/50 cursor-not-allowed'
+                                : 'border-white/20 bg-white/10 text-white/60 cursor-not-allowed'
+                          }`}
+                          disabled={!canChangeThisColor}
+                        >
+                          {player.id === playerSession?.playerId
+                            ? canChangeColor
+                              ? 'Change'
+                              : 'Locked'
+                            : 'View'}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between border-t border-white/10 pt-4">
+                      <span className="text-[9px] uppercase tracking-[0.4em] text-white/70">
+                        {room?.players.length ?? 0} / {room?.playerCount ?? 2} Players
+                      </span>
+                      <span className="text-[9px] uppercase tracking-[0.4em] text-white/70">
+                        {connectionLabel}
+                      </span>
                     </div>
                   </div>
-                  <div className="mt-6 flex items-center justify-between border-t border-white/10 pt-4">
-                    <span className="text-[9px] uppercase tracking-[0.4em] text-white/70">
-                      {room?.players.length ?? 0} / {room?.playerCount ?? 2} Players
-                    </span>
-                    <span className="text-[9px] uppercase tracking-[0.4em] text-white/70">
-                      {connectionLabel}
-                    </span>
-                  </div>
-                </>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
@@ -1076,7 +1135,7 @@ export default function RoomPage() {
         </p>
       </div>
 
-      {settingsOpen && (
+      {settingsOpen && canEditSettings && (
         <div
           className="fixed inset-0 z-40 flex items-end justify-center bg-black/60 px-4 py-6"
           onClick={(e) => {
