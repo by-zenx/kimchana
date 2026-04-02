@@ -7,6 +7,7 @@ import { GameEngine, type SerializedGameState } from '@/lib/game-engine';
 import { GRID_SIZES, MAX_PLAYERS, MIN_PLAYERS } from '@/lib/constants';
 import type { RealtimeAck, RealtimeRoomStatus } from '@/lib/realtime/types';
 import { getRoomSnapshot, getRoomStateContext } from '@/lib/realtime/snapshot';
+import { applyRoomMove } from '@/lib/realtime/move';
 
 type JoinRoomPayload = {
   roomId?: string;
@@ -175,40 +176,11 @@ function attachSocketHandlers(io: SocketIOServer) {
           return;
         }
 
-        const context = await getRoomStateContext(session.roomId);
-        if (!context) {
-          fail(ack, 'Room not found');
+        const result = await applyRoomMove(session.roomId, session.player.id, edgeKey);
+        if (!result.ok) {
+          fail(ack, result.error);
           return;
         }
-
-        if (context.room.status !== 'playing') {
-          fail(ack, 'Game is not in playing state');
-          return;
-        }
-
-        const previousMoveCount = context.gameState.moveHistory.length;
-        const { newState } = GameEngine.playMove(
-          context.gameState,
-          edgeKey,
-          session.player.id,
-        );
-
-        if (newState.moveHistory.length === previousMoveCount) {
-          fail(ack, 'Invalid move');
-          return;
-        }
-
-        await db
-          .update(rooms)
-          .set({
-            game_state: GameEngine.serializeState(newState) as SerializedGameState,
-            status: newState.status,
-            winner_id: newState.winnerId,
-            current_player_index: newState.currentPlayerIndex,
-            finished_at: newState.status === 'finished' ? new Date() : null,
-            last_activity_at: new Date(),
-          })
-          .where(eq(rooms.id, session.roomId));
 
         await emitRoomSnapshot(io, session.roomId);
         ack?.({ ok: true });

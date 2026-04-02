@@ -455,13 +455,47 @@ export default function RoomPage() {
     };
   }, [handleColorChange]);
 
-  const handleMove = useCallback((edgeKey: string) => {
-    emitSocket('game:play-move', { edgeKey }, (ack) => {
-      if (!ack.ok) {
-        console.warn(ack.error || 'Move rejected');
+  const moveViaHttp = useCallback(async (edgeKey: string) => {
+    if (!roomId || !playerSession?.playerId || !playerSession.playerToken) {
+      return false;
+    }
+
+    try {
+      const response = await fetch(`/api/rooms/${roomId}/move`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          playerId: playerSession.playerId,
+          playerToken: playerSession.playerToken,
+          edgeKey,
+        }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        console.warn(payload?.error || 'Move rejected');
+        return false;
       }
+      return true;
+    } catch (error) {
+      console.error(error);
+      return false;
+    }
+  }, [playerSession?.playerId, playerSession?.playerToken, roomId]);
+
+  const handleMove = useCallback((edgeKey: string) => {
+    const sentRealtime = emitSocket('game:play-move', { edgeKey }, (ack) => {
+      if (ack.ok) {
+        return;
+      }
+      void moveViaHttp(edgeKey);
     });
-  }, [emitSocket]);
+
+    if (!sentRealtime) {
+      void moveViaHttp(edgeKey);
+    }
+  }, [emitSocket, moveViaHttp]);
 
   const handleChatSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
