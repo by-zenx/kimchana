@@ -28,7 +28,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
-      <body className="font-sans antialiased bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+      <body className="font-sans antialiased from-slate-950 via-slate-900 to-slate-950 overflow-hidde">
         {children}
         <Analytics />
       </body>

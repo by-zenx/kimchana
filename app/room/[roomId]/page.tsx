@@ -67,15 +67,27 @@ type PlayerSession = {
 
 const GRID_OPTIONS = GRID_SIZES.slice(0, 3);
 
-const renderChatMessages = (messages: ChatMessage[]) => {
+const renderChatMessages = (messages: ChatMessage[], currentPlayerId?: string) => {
   return messages.map((msg, index) => (
-    <div key={msg.id ?? `${msg.playerId}-${index}`} className="flex gap-2 pb-2">
-      <div>
-        <p className="text-xs font-semibold text-slate-900">
+    <div
+      key={msg.id ?? `${msg.playerId}-${index}`}
+      className={`flex pb-3 ${msg.playerId === currentPlayerId ? 'justify-end' : 'justify-start'}`}
+    >
+      <div
+        className={`max-w-[78%] rounded-2xl px-4 py-3 shadow ${
+          msg.playerId === currentPlayerId
+            ? 'bg-gradient-to-br from-pink-400 to-fuchsia-500 text-white rounded-br-md'
+            : 'bg-white/90 text-slate-800 rounded-bl-md'
+        }`}
+      >
+        <p className={`text-[11px] font-semibold ${msg.playerId === currentPlayerId ? 'text-white/90' : 'text-slate-600'}`}>
           {msg.playerName}
         </p>
-        <p className="text-xs text-slate-700 bg-white/60 rounded-lg px-3 py-2 mt-1">
+        <p className="mt-1 text-sm leading-snug">
           {msg.content}
+        </p>
+        <p className={`mt-2 text-[10px] ${msg.playerId === currentPlayerId ? 'text-white/80' : 'text-slate-500'}`}>
+          {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </p>
       </div>
     </div>
@@ -100,6 +112,7 @@ export default function RoomPage() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [playerSession, setPlayerSession] = useState<PlayerSession | null>(null);
   const [socketStatus, setSocketStatus] = useState<'idle' | 'connecting' | 'connected' | 'disconnected'>('idle');
+  const [realtimeJoined, setRealtimeJoined] = useState(false);
   const [chatDraft, setChatDraft] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -161,6 +174,23 @@ export default function RoomPage() {
       chatMessages: payload?.chatMessages ?? [],
     } as RoomSnapshot;
   }, []);
+
+  const fetchRoomSnapshot = useCallback(async () => {
+    if (!roomId) {
+      return;
+    }
+    try {
+      const response = await fetch(`/api/rooms/${roomId}`);
+      if (!response.ok) {
+        return;
+      }
+      const data = await response.json();
+      const snapshot = toSnapshotPayload(data.room);
+      applyRoomSnapshot(snapshot);
+    } catch (error) {
+      console.error('Snapshot fetch failed', error);
+    }
+  }, [applyRoomSnapshot, roomId, toSnapshotPayload]);
 
   useEffect(() => {
     if (!roomId) {
@@ -273,6 +303,7 @@ export default function RoomPage() {
 
     let cancelled = false;
     setSocketStatus('connecting');
+    setRealtimeJoined(false);
 
     const connectRealtime = async () => {
       try {
@@ -306,14 +337,18 @@ export default function RoomPage() {
           },
           (ack: RealtimeAck) => {
             if (!ack?.ok) {
+              setRealtimeJoined(false);
               setError(ack.error || 'Unable to join realtime room');
+              return;
             }
+            setRealtimeJoined(true);
           },
         );
       });
 
       socket.on('disconnect', () => {
         if (!cancelled) {
+          setRealtimeJoined(false);
           setSocketStatus('disconnected');
         }
       });
@@ -321,11 +356,13 @@ export default function RoomPage() {
       socket.on('connect_error', (error) => {
         console.error('Socket connection error', error);
         if (!cancelled) {
+          setRealtimeJoined(false);
           setSocketStatus('disconnected');
         }
       });
 
       socket.on('room:snapshot', (snapshot: RoomSnapshot) => {
+        setRealtimeJoined(true);
         applyRoomSnapshot(snapshot);
       });
 
@@ -338,6 +375,7 @@ export default function RoomPage() {
 
     return () => {
       cancelled = true;
+      setRealtimeJoined(false);
       const socket = socketRef.current;
       if (socket) {
         socket.emit('room:leave');
@@ -371,6 +409,72 @@ export default function RoomPage() {
     },
     [],
   );
+
+  useEffect(() => {
+    if (!roomId) {
+      return;
+    }
+
+    const needsPolling = socketStatus !== 'connected' || !realtimeJoined;
+    if (!needsPolling) {
+      return;
+    }
+
+    void fetchRoomSnapshot();
+    const intervalId = window.setInterval(() => {
+      void fetchRoomSnapshot();
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [fetchRoomSnapshot, realtimeJoined, roomId, socketStatus]);
+
+  useEffect(() => {
+    if (
+      socketStatus !== 'connected' ||
+      realtimeJoined ||
+      !roomId ||
+      !playerSession?.playerId ||
+      !playerSession.playerToken
+    ) {
+      return;
+    }
+
+    const socket = socketRef.current;
+    if (!socket) {
+      return;
+    }
+
+    const retryId = window.setTimeout(() => {
+      socket.emit(
+        'room:join',
+        {
+          roomId,
+          playerId: playerSession.playerId,
+          playerToken: playerSession.playerToken,
+        },
+        (ack: RealtimeAck) => {
+          if (ack.ok) {
+            setRealtimeJoined(true);
+            setError('');
+            return;
+          }
+          console.warn(ack.error || 'Unable to join realtime room');
+        },
+      );
+    }, 1200);
+
+    return () => {
+      window.clearTimeout(retryId);
+    };
+  }, [
+    playerSession?.playerId,
+    playerSession?.playerToken,
+    realtimeJoined,
+    roomId,
+    socketStatus,
+  ]);
 
   const handleColorChange = useCallback((newColor: string) => {
     if (!playerSession?.playerId || !room) {
@@ -497,26 +601,9 @@ export default function RoomPage() {
     }
   }, [emitSocket, moveViaHttp]);
 
-  const handleChatSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!chatDraft.trim() || !playerSession || !roomId) {
-      return;
-    }
-
-    setChatSending(true);
-    const content = chatDraft.trim();
-
-    const sentRealtime = emitSocket('chat:send', { content }, (ack) => {
-      if (!ack.ok) {
-        console.warn(ack.error || 'Unable to send chat message');
-      }
-    });
-
-    if (sentRealtime) {
-      setChatDraft('');
-      setChatSending(false);
-      setChatBubbleOpen(false);
-      return;
+  const sendChatViaHttp = useCallback(async (content: string) => {
+    if (!roomId || !playerSession?.playerId || !playerSession.playerToken) {
+      return false;
     }
 
     try {
@@ -531,19 +618,49 @@ export default function RoomPage() {
           content,
         }),
       });
-      if (response.ok) {
-        const data = await response.json();
-        if (data?.chatMessage) {
-          appendChatMessage(data.chatMessage);
-        }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        console.warn(payload?.error || 'Unable to send chat message');
+        return false;
       }
+
+      const data = await response.json().catch(() => null);
+      if (data?.chatMessage) {
+        appendChatMessage(data.chatMessage);
+      }
+      return true;
     } catch (error) {
       console.error(error);
-    } finally {
+      return false;
+    }
+  }, [appendChatMessage, playerSession?.playerId, playerSession?.playerToken, roomId]);
+
+  const handleChatSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!chatDraft.trim() || !playerSession || !roomId) {
+      return;
+    }
+
+    setChatSending(true);
+    const content = chatDraft.trim();
+
+    const sentRealtime = emitSocket('chat:send', { content }, (ack) => {
+      if (!ack.ok) {
+        void sendChatViaHttp(content);
+      }
+    });
+
+    if (sentRealtime) {
       setChatDraft('');
       setChatSending(false);
       setChatBubbleOpen(false);
+      return;
     }
+
+    await sendChatViaHttp(content);
+    setChatDraft('');
+    setChatSending(false);
+    setChatBubbleOpen(false);
   };
 
   useEffect(() => {
@@ -553,9 +670,9 @@ export default function RoomPage() {
   }, [chatMessages]);
 
   const connectionLabel =
-    socketStatus === 'connected'
+    socketStatus === 'connected' && realtimeJoined
       ? 'Live'
-      : socketStatus === 'connecting'
+      : socketStatus === 'connecting' || (socketStatus === 'connected' && !realtimeJoined)
         ? 'Syncing'
         : 'Offline';
   const statusLabel = room?.status === 'playing'
@@ -1094,41 +1211,51 @@ export default function RoomPage() {
             }
           }}
         >
-          <div className="w-full max-w-md rounded-[42px] border-4 border-black/70 bg-white/80 p-0 shadow-[0_40px_70px_rgba(2,35,26,0.75)] transition-all duration-300 scale-95 opacity-0"
+          <div className="w-full max-w-md rounded-[32px] border border-white/30 bg-[#f7f8fb] p-0 shadow-[0_40px_70px_rgba(2,35,26,0.75)] transition-all duration-300 scale-95 opacity-0"
             style={{
               transform: chatSheetOpen ? 'scale(1)' : 'scale(0.95)',
               opacity: chatSheetOpen ? 1 : 0
             }}
           >
-            <div className="rounded-[38px] border-2 border-black bg-gradient-to-b from-[#00d4c5] via-[#00b8ad] to-[#02a5a3] p-6">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold uppercase tracking-[0.4em] text-slate-900">
-                  Chat room
-                </p>
+            <div className="rounded-[32px] p-5">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.32em] text-slate-500">
+                    Room Chat
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-slate-800">
+                    Live conversation
+                  </p>
+                </div>
                 <button
                   type="button"
                   onClick={handleChatToggle}
-                  className="rounded-full border border-white/60 bg-white/80 p-2 text-slate-900 cursor-pointer transition-transform hover:scale-105"
+                  className="rounded-full border border-slate-300 bg-white p-2 text-slate-700 cursor-pointer transition-transform hover:scale-105"
                   aria-label="Close chat"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <div className="mt-4 max-h-[60vh] overflow-y-auto space-y-3 text-sm custom-scrollbar">
-                {renderChatMessages(chatMessages)}
+
+              <div
+                ref={chatScrollRef}
+                className="mt-4 max-h-[60vh] overflow-y-auto space-y-3 rounded-2xl bg-[#eef1f7] p-3 text-sm custom-scrollbar"
+              >
+                {renderChatMessages(chatMessages, playerSession?.playerId)}
               </div>
-              <form onSubmit={handleChatSubmit} className="mt-4 flex items-center gap-2">
+
+              <form onSubmit={handleChatSubmit} className="mt-4 flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-2 shadow-sm">
                 <input
                   type="text"
                   value={chatDraft}
                   onChange={(event) => setChatDraft(event.target.value)}
-                  placeholder="Message your crew"
-                  className="flex-1 rounded-full border border-white/20 bg-white/80 px-4 py-2 text-sm text-slate-900 placeholder:text-slate-500 focus:border-white focus:outline-none"
+                  placeholder="Type your message..."
+                  className="flex-1 rounded-full border-0 bg-transparent px-3 py-2 text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none"
                 />
                 <button
                   type="submit"
                   disabled={chatSending}
-                  className="rounded-full border border-slate-900/30 bg-slate-900/80 p-2 text-white transition hover:scale-105 disabled:opacity-40"
+                  className="rounded-full bg-gradient-to-br from-pink-400 to-fuchsia-500 p-2 text-white transition hover:scale-105 disabled:opacity-40"
                 >
                   <Send className="h-4 w-4" />
                 </button>

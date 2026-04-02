@@ -469,7 +469,6 @@ export function initializeSocketServer(httpServer: HttpServer): SocketIOServer {
 
   const io = new SocketIOServer(httpServer, {
     path: '/api/socketio',
-    addTrailingSlash: false,
   });
 
   attachSocketHandlers(io);
