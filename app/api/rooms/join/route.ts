@@ -1,14 +1,17 @@
 import { NextResponse } from 'next/server';
+import { eq } from 'drizzle-orm';
 import { db } from '@/db';
 import { players, rooms } from '@/db/schema';
-import { GameEngine, SerializedGameState } from '@/lib/game-engine';
 import { PLAYER_COLORS } from '@/lib/constants';
-import { eq } from 'drizzle-orm';
+import { GameEngine, type SerializedGameState } from '@/lib/game-engine';
+import { getRoomSnapshot, getRoomStateContext } from '@/lib/realtime/snapshot';
+import { broadcastRoomSnapshot } from '@/lib/realtime/server';
 
 export async function POST(request: Request) {
   try {
     const payload = await request.json();
-    const { roomId, playerName } = payload;
+    const roomId = payload?.roomId?.toUpperCase?.();
+    const playerName = payload?.playerName?.trim?.();
 
     if (!roomId || !playerName) {
       return NextResponse.json(
@@ -17,27 +20,15 @@ export async function POST(request: Request) {
       );
     }
 
-    const room = await db.query.rooms.findFirst({
-      where: eq(rooms.id, roomId),
-    });
-
-    if (!room) {
+    const context = await getRoomStateContext(roomId);
+    if (!context) {
       return NextResponse.json(
         { error: 'Room not found' },
         { status: 404 },
       );
     }
 
-    const baseState =
-      (room.game_state && Object.keys(room.game_state).length
-        ? GameEngine.deserializeState(room.game_state as SerializedGameState)
-        : GameEngine.createInitialState(
-            { rows: room.grid_rows, cols: room.grid_cols },
-            [],
-          ));
-    const currentPlayers = baseState.players ?? [];
-
-    if (currentPlayers.length >= room.player_count) {
+    if (context.players.length >= context.room.player_count) {
       return NextResponse.json(
         { error: 'Room is full' },
         { status: 400 },
@@ -46,12 +37,13 @@ export async function POST(request: Request) {
 
     const playerId = `player-${crypto.randomUUID()}`;
     const token = crypto.randomUUID();
+    const nextOrder = context.players.length;
     const newPlayer = {
       id: playerId,
       name: playerName,
-      color: PLAYER_COLORS[currentPlayers.length % PLAYER_COLORS.length],
+      color: PLAYER_COLORS[nextOrder % PLAYER_COLORS.length],
       score: 0,
-      order: currentPlayers.length,
+      order: nextOrder,
       isActive: true,
       isHost: false,
     };
@@ -64,8 +56,8 @@ export async function POST(request: Request) {
     });
 
     const updatedGameState = {
-      ...baseState,
-      players: [...currentPlayers, newPlayer],
+      ...context.gameState,
+      players: [...context.gameState.players, newPlayer],
     };
 
     await db
@@ -76,20 +68,21 @@ export async function POST(request: Request) {
       })
       .where(eq(rooms.id, roomId));
 
+    await broadcastRoomSnapshot(roomId);
+    const snapshot = await getRoomSnapshot(roomId);
+
     return NextResponse.json({
-      room: {
-        id: room.id,
-        hostId: room.host_id,
-        gridSize: { rows: room.grid_rows, cols: room.grid_cols },
-        playerCount: room.player_count,
-        maxPlayers: room.max_players,
-        timerSeconds: room.timer_seconds,
-        autoMoveEnabled: room.auto_move_enabled,
-        status: room.status,
-        settings: room.settings,
-        createdAt: room.created_at.getTime(),
-        gameState: GameEngine.serializeState(updatedGameState),
-        players: updatedGameState.players,
+      room: snapshot?.room ?? {
+        id: context.room.id,
+        hostId: context.room.host_id,
+        gridSize: { rows: context.room.grid_rows, cols: context.room.grid_cols },
+        playerCount: context.room.player_count,
+        maxPlayers: context.room.max_players,
+        timerSeconds: context.room.timer_seconds,
+        autoMoveEnabled: context.room.auto_move_enabled,
+        status: context.room.status,
+        settings: context.room.settings,
+        createdAt: context.room.created_at.getTime(),
       },
       playerId,
       playerToken: token,

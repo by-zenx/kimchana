@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { io, Socket } from 'socket.io-client';
 import { Button } from '@/components/ui/button';
 import { GameBoard } from '@/components/game/GameBoard';
 import { GameEngine, SerializedGameState } from '@/lib/game-engine';
 import { Room, GameState, ChatMessage } from '@/lib/types';
 import { GRID_SIZES } from '@/lib/constants';
+import { RoomSnapshot, RealtimeAck } from '@/lib/realtime/types';
 import {
   Clock3,
   Copy,
@@ -58,7 +60,7 @@ type PlayerSession = {
   playerId: string;
   playerToken: string;
   playerName: string;
-  isHost: boolean;
+  isHost?: boolean;
 };
 
 const GRID_OPTIONS = GRID_SIZES.slice(0, 3);
@@ -110,13 +112,53 @@ export default function RoomPage() {
   const [chatSending, setChatSending] = useState(false);
   const [chatBubbleOpen, setChatBubbleOpen] = useState(false);
   const [animatedChatBubbles, setAnimatedChatBubbles] = useState<Array<{id: string, playerId: string, message: string, x?: number, y?: number}>>([]);
-  const socketRef = useRef<WebSocket | null>(null);
+  const socketRef = useRef<Socket | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
   const currentGrid = useMemo(
     () => GRID_OPTIONS[selectedGridIndex] ?? GRID_OPTIONS[0],
     [selectedGridIndex],
   );
+
+  const applyRoomSnapshot = useCallback((snapshot: RoomSnapshot) => {
+    const deserializedState = GameEngine.deserializeState(
+      snapshot.gameState as SerializedGameState,
+    );
+    setRoom({
+      ...snapshot.room,
+      players: snapshot.players ?? [],
+      gameState: deserializedState,
+      chatMessages: snapshot.chatMessages ?? [],
+    });
+    setGameState(deserializedState);
+    setChatMessages(snapshot.chatMessages ?? []);
+    const gridIndex = GRID_OPTIONS.findIndex(
+      (grid) =>
+        grid.rows === snapshot.room.gridSize.rows &&
+        grid.cols === snapshot.room.gridSize.cols,
+    );
+    setSelectedGridIndex(gridIndex >= 0 ? gridIndex : 0);
+    setPlayerCount(snapshot.room.playerCount ?? 2);
+    setAutoMoveEnabled(snapshot.room.autoMoveEnabled ?? false);
+    setError('');
+  }, []);
+
+  const toSnapshotPayload = useCallback((payload: any): RoomSnapshot => {
+    if (
+      payload?.room &&
+      payload?.players &&
+      payload?.gameState
+    ) {
+      return payload as RoomSnapshot;
+    }
+
+    return {
+      room: payload,
+      players: payload?.players ?? [],
+      gameState: payload?.gameState,
+      chatMessages: payload?.chatMessages ?? [],
+    } as RoomSnapshot;
+  }, []);
 
   useEffect(() => {
     if (!roomId) {
@@ -141,25 +183,8 @@ export default function RoomPage() {
           return;
         }
         const data = await response.json();
-        const payload = data.room;
-        const deserialized = GameEngine.deserializeState(
-          payload.gameState as SerializedGameState,
-        );
-        setRoom({
-          ...payload,
-          gameState: deserialized,
-        });
-        setGameState(deserialized);
-        setChatMessages(payload.chatMessages ?? []);
-        const gridIndex = GRID_OPTIONS.findIndex(
-          (grid) =>
-            grid.rows === payload.gridSize.rows &&
-            grid.cols === payload.gridSize.cols,
-        );
-        setSelectedGridIndex(gridIndex >= 0 ? gridIndex : 0);
-        setPlayerCount(payload.playerCount);
-        setAutoMoveEnabled(payload.autoMoveEnabled);
-        setError('');
+        const snapshot = toSnapshotPayload(data.room);
+        applyRoomSnapshot(snapshot);
       } catch {
         if (!didCancel) {
           setError('Unable to load room data');
@@ -175,175 +200,246 @@ export default function RoomPage() {
         clearTimeout(retry);
       }
     };
-  }, [roomId]);
+  }, [applyRoomSnapshot, roomId, toSnapshotPayload]);
 
-  const fetchChat = useCallback(async () => {
-    if (!roomId) {
-      return;
-    }
-    try {
-      const response = await fetch(`/api/rooms/${roomId}/chat`);
-      if (response.ok) {
-        const { chatMessages } = await response.json();
-        setChatMessages(chatMessages ?? []);
-      }
-    } catch (error) {
-      console.error(error);
-    }
-  }, [roomId]);
+  const appendChatMessage = useCallback((message: ChatMessage) => {
+    setChatMessages((prev) => (
+      prev.some((existing) => existing.id === message.id)
+        ? prev
+        : [...prev, message]
+    ));
+
+    const bubbleId = `${message.id}-${message.createdAt}`;
+    setAnimatedChatBubbles((prev) => [
+      ...prev.filter((bubble) => bubble.id !== bubbleId),
+      {
+        id: bubbleId,
+        playerId: message.playerId,
+        message: message.content,
+      },
+    ]);
+
+    window.setTimeout(() => {
+      setAnimatedChatBubbles((prev) =>
+        prev.filter((bubble) => bubble.id !== bubbleId),
+      );
+    }, 3000);
+  }, []);
 
   useEffect(() => {
     if (!roomId) {
       return;
     }
-    const raw = localStorage.getItem(`room-${roomId}-session`);
-    if (raw) {
-      setPlayerSession(JSON.parse(raw));
-    }
-    fetchChat();
-  }, [roomId, fetchChat]);
 
-  const handleIncomingSocket = useCallback(
-    (event: MessageEvent) => {
+    const raw = localStorage.getItem(`room-${roomId}-session`);
+    if (!raw) {
+      return;
+    }
+
+    try {
+      setPlayerSession(JSON.parse(raw));
+    } catch {
+      localStorage.removeItem(`room-${roomId}-session`);
+    }
+  }, [roomId]);
+
+  useEffect(() => {
+    if (!roomId || !room?.hostId || !playerSession?.playerId) {
+      return;
+    }
+
+    const shouldBeHost = playerSession.playerId === room.hostId;
+    if (playerSession.isHost === shouldBeHost) {
+      return;
+    }
+
+    const updatedSession = {
+      ...playerSession,
+      isHost: shouldBeHost,
+    };
+    setPlayerSession(updatedSession);
+    localStorage.setItem(
+      `room-${roomId}-session`,
+      JSON.stringify(updatedSession),
+    );
+  }, [room?.hostId, playerSession, roomId]);
+
+  useEffect(() => {
+    if (!roomId || !playerSession?.playerId || !playerSession.playerToken) {
+      return;
+    }
+
+    let cancelled = false;
+    setSocketStatus('connecting');
+
+    const connectRealtime = async () => {
       try {
-        const message = JSON.parse(event.data);
-        if (message.type === 'initial') {
-          const payload = message.payload;
-          const deserialized = GameEngine.deserializeState(
-            payload.gameState as SerializedGameState,
-          );
-          setRoom({
-            ...payload.room,
-            gameState: deserialized,
-            players: payload.players ?? [],
-          });
-          setGameState(deserialized);
-          setChatMessages(payload.chatMessages ?? []);
-          const gridIndex = GRID_OPTIONS.findIndex(
-            (grid) =>
-              grid.rows === payload.room.gridSize?.rows &&
-              grid.cols === payload.room.gridSize?.cols,
-          );
-          setSelectedGridIndex(gridIndex >= 0 ? gridIndex : 0);
-          setPlayerCount(payload.room.playerCount ?? playerCount);
-          setAutoMoveEnabled(payload.room.autoMoveEnabled ?? false);
-        } else if (message.type === 'state') {
-          const state = GameEngine.deserializeState(
-            message.gameState as SerializedGameState,
-          );
-          setGameState(state);
-          setRoom((prev) =>
-            prev
-              ? {
-                ...prev,
-                gameState: state,
-              }
-              : prev,
-          );
-        } else if (message.type === 'chat') {
-          setChatMessages((prev) => [...prev, message.payload]);
-        } else if (message.type === 'settings') {
-          const { gridRows, gridCols, playerCount, autoMoveEnabled } =
-            message.payload;
-          setSelectedGridIndex(
-            GRID_OPTIONS.findIndex(
-              (grid) =>
-                grid.rows === gridRows && grid.cols === gridCols,
-            ) || 0,
-          );
-          setPlayerCount(playerCount);
-          setAutoMoveEnabled(autoMoveEnabled);
-          setRoom((prev) =>
-            prev
-              ? {
-                ...prev,
-                gridSize: { rows: gridRows, cols: gridCols },
-                playerCount,
-                autoMoveEnabled,
-              }
-              : prev,
-          );
-        } else if (message.type === 'status') {
-          setRoom((prev) =>
-            prev
-              ? {
-                ...prev,
-                status: message.payload.status,
-              }
-              : prev,
-          );
-        }
+        await fetch('/api/socketio');
       } catch (error) {
-        console.error('Socket parse failed', error);
+        console.error('Socket bootstrap failed', error);
       }
+
+      if (cancelled) {
+        return;
+      }
+
+      const socket = io({
+        path: '/api/socketio',
+        transports: ['websocket'],
+      });
+
+      socketRef.current = socket;
+
+      socket.on('connect', () => {
+        if (cancelled) {
+          return;
+        }
+
+        setSocketStatus('connected');
+        socket.emit(
+          'room:join',
+          {
+            roomId,
+            playerId: playerSession.playerId,
+            playerToken: playerSession.playerToken,
+          },
+          (ack: RealtimeAck) => {
+            if (!ack?.ok) {
+              setError(ack.error || 'Unable to join realtime room');
+            }
+          },
+        );
+      });
+
+      socket.on('disconnect', () => {
+        if (!cancelled) {
+          setSocketStatus('disconnected');
+        }
+      });
+
+      socket.on('connect_error', (error) => {
+        console.error('Socket connection error', error);
+        if (!cancelled) {
+          setSocketStatus('disconnected');
+        }
+      });
+
+      socket.on('room:snapshot', (snapshot: RoomSnapshot) => {
+        applyRoomSnapshot(snapshot);
+      });
+
+      socket.on('chat:new', (message: ChatMessage) => {
+        appendChatMessage(message);
+      });
+    };
+
+    void connectRealtime();
+
+    return () => {
+      cancelled = true;
+      const socket = socketRef.current;
+      if (socket) {
+        socket.emit('room:leave');
+        socket.disconnect();
+      }
+      if (socketRef.current === socket) {
+        socketRef.current = null;
+      }
+    };
+  }, [
+    applyRoomSnapshot,
+    appendChatMessage,
+    playerSession?.playerId,
+    playerSession?.playerToken,
+    roomId,
+  ]);
+
+  const emitSocket = useCallback(
+    (
+      event: string,
+      payload: Record<string, unknown>,
+      ack?: (response: RealtimeAck) => void,
+    ) => {
+      const socket = socketRef.current;
+      if (!socket || !socket.connected) {
+        ack?.({ ok: false, error: 'Realtime connection is not available' });
+        return false;
+      }
+      socket.emit(event, payload, ack);
+      return true;
     },
-    [playerCount, roomId],
+    [],
   );
 
-  const sendSocket = useCallback((payload: unknown) => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify(payload));
-    }
-  }, []);
-
   const handleColorChange = useCallback((newColor: string) => {
-    if (!playerSession?.playerId || !room) return;
+    if (!playerSession?.playerId || !room) {
+      return;
+    }
 
-    // Check if color is already taken by another player
-    const isColorTaken = room.players.some(player =>
-      player.id !== playerSession.playerId && player.color === newColor
+    const isColorTaken = room.players.some(
+      (player) =>
+        player.id !== playerSession.playerId &&
+        player.color === newColor,
     );
 
     if (isColorTaken) {
-      // Show error feedback
-      const takenBy = room.players.find(p => p.color === newColor);
+      const takenBy = room.players.find((player) => player.color === newColor);
       console.warn(`Color ${newColor} is taken by ${takenBy?.name || 'another player'}`);
       return;
     }
 
-    // Optimistically update local state immediately
-    const oldColor = room.players.find(p => p.id === playerSession.playerId)?.color;
-    setRoom(prev => prev ? {
-      ...prev,
-      players: prev.players.map(p =>
-        p.id === playerSession.playerId
-          ? { ...p, color: newColor }
-          : p
-      )
-    } : prev);
+    const previousColor = room.players.find(
+      (player) => player.id === playerSession.playerId,
+    )?.color;
 
-    // Send to server
-    sendSocket({
-      type: 'color_change',
-      payload: {
-        playerId: playerSession.playerId,
-        color: newColor,
-        timestamp: Date.now() // Add timestamp for conflict resolution
+    setRoom((prev) => (
+      prev
+        ? {
+            ...prev,
+            players: prev.players.map((player) =>
+              player.id === playerSession.playerId
+                ? { ...player, color: newColor }
+                : player,
+            ),
+          }
+        : prev
+    ));
+
+    const sent = emitSocket('player:update-color', { color: newColor }, (ack) => {
+      if (ack.ok) {
+        return;
       }
+
+      setRoom((prev) => (
+        prev
+          ? {
+              ...prev,
+              players: prev.players.map((player) =>
+                player.id === playerSession.playerId
+                  ? { ...player, color: previousColor ?? player.color }
+                  : player,
+              ),
+            }
+          : prev
+      ));
+      console.warn(ack.error || 'Color change rejected');
     });
 
-    // Set timeout to handle potential server rejection
-    setTimeout(() => {
-      // If server hasn't confirmed the change within 2 seconds, revert
-      // This handles cases where another player changed to the same color simultaneously
-      const currentRoomState = room; // This would ideally come from latest server state
-      const currentPlayer = currentRoomState?.players.find(p => p.id === playerSession.playerId);
-
-      if (currentPlayer?.color !== newColor) {
-        // Revert to old color if server didn't accept our change
-        setRoom(prev => prev ? {
-          ...prev,
-          players: prev.players.map(p =>
-            p.id === playerSession.playerId
-              ? { ...p, color: oldColor || newColor }
-              : p
-          )
-        } : prev);
-
-        console.warn('Color change was rejected by server, possibly due to concurrent change');
-      }
-    }, 2000);
-  }, [playerSession, room, sendSocket]);
+    if (!sent) {
+      setRoom((prev) => (
+        prev
+          ? {
+              ...prev,
+              players: prev.players.map((player) =>
+                player.id === playerSession.playerId
+                  ? { ...player, color: previousColor ?? player.color }
+                  : player,
+              ),
+            }
+          : prev
+      ));
+    }
+  }, [emitSocket, playerSession?.playerId, room]);
 
   useEffect(() => {
     // Add global function for color changing
@@ -358,38 +454,33 @@ export default function RoomPage() {
     };
   }, [handleColorChange]);
 
-  const handleStateChange = (state: GameState) => {
-    setGameState(state);
-    setRoom((prev) =>
-      prev
-        ? {
-          ...prev,
-          gameState: state,
-        }
-        : prev,
-    );
-    sendSocket({
-      type: 'state',
-      gameState: GameEngine.serializeState(state),
+  const handleMove = useCallback((edgeKey: string) => {
+    emitSocket('game:play-move', { edgeKey }, (ack) => {
+      if (!ack.ok) {
+        console.warn(ack.error || 'Move rejected');
+      }
     });
-  };
+  }, [emitSocket]);
 
   const handleChatSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!chatDraft.trim() || !playerSession || !roomId) {
       return;
     }
+
     setChatSending(true);
-    const payload = {
-      type: 'chat',
-      playerId: playerSession.playerId,
-      playerName: playerSession.playerName,
-      content: chatDraft.trim(),
-    };
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      sendSocket(payload);
+    const content = chatDraft.trim();
+
+    const sentRealtime = emitSocket('chat:send', { content }, (ack) => {
+      if (!ack.ok) {
+        console.warn(ack.error || 'Unable to send chat message');
+      }
+    });
+
+    if (sentRealtime) {
       setChatDraft('');
       setChatSending(false);
+      setChatBubbleOpen(false);
       return;
     }
 
@@ -400,28 +491,15 @@ export default function RoomPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          playerId: payload.playerId,
-          playerName: payload.playerName,
-          content: payload.content,
+          playerId: playerSession.playerId,
+          playerToken: playerSession.playerToken,
+          content,
         }),
       });
       if (response.ok) {
         const data = await response.json();
         if (data?.chatMessage) {
-          setChatMessages((prev) => [...prev, data.chatMessage]);
-          
-          // Create animated chat bubble for GameBoard
-          const bubbleId = Date.now().toString();
-          setAnimatedChatBubbles(prev => [...prev, {
-            id: bubbleId,
-            playerId: data.chatMessage.playerId,
-            message: data.chatMessage.content
-          }]);
-          
-          // Remove bubble after animation
-          setTimeout(() => {
-            setAnimatedChatBubbles(prev => prev.filter(b => b.id !== bubbleId));
-          }, 3000);
+          appendChatMessage(data.chatMessage);
         }
       }
     } catch (error) {
@@ -429,7 +507,7 @@ export default function RoomPage() {
     } finally {
       setChatDraft('');
       setChatSending(false);
-      setChatBubbleOpen(false); // Close the chat bubble after sending
+      setChatBubbleOpen(false);
     }
   };
 
@@ -452,7 +530,11 @@ export default function RoomPage() {
       : 'Lobby';
   const isPlaying = room?.status === 'playing';
   const isWaiting = room?.status === 'lobby';
-  const isHostPlayer = Boolean(playerSession?.isHost);
+  const isHostPlayer = Boolean(
+    playerSession?.playerId &&
+    room?.hostId &&
+    playerSession.playerId === room.hostId,
+  );
   const canEditSettings = isHostPlayer && isWaiting;
   const showGameInfo = isWaiting || !isPlaying;
   const playerCountText = `${room?.players.length ?? 0}/${room?.playerCount ?? 2} Players`;
@@ -508,37 +590,21 @@ export default function RoomPage() {
     }
     const rows = currentGrid.rows;
     const cols = currentGrid.cols;
-    const playersForReset = gameState?.players ?? room?.players ?? [];
-    const restartedState = GameEngine.createInitialState(
-      { rows, cols },
-      playersForReset,
-    );
-    setGameState(restartedState);
-    setRoom((prev) =>
-      prev
-        ? {
-          ...prev,
-          gridSize: { rows, cols },
-          playerCount,
-          autoMoveEnabled,
-          gameState: restartedState,
-        }
-        : prev,
-    );
-    sendSocket({
-      type: 'settings',
-      payload: {
-        gridRows: rows,
-        gridCols: cols,
-        playerCount,
-        autoMoveEnabled,
-      },
+    emitSocket('room:update-settings', {
+      gridRows: rows,
+      gridCols: cols,
+      playerCount,
+      autoMoveEnabled,
+    }, (ack) => {
+      if (!ack.ok) {
+        console.warn(ack.error || 'Unable to update room settings');
+      }
     });
     setSettingsOpen(false);
   };
 
   const startGameViaHttp = useCallback(async () => {
-    if (!roomId) {
+    if (!roomId || !playerSession?.playerId || !playerSession.playerToken) {
       return;
     }
     try {
@@ -547,7 +613,11 @@ export default function RoomPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ status: 'playing' }),
+        body: JSON.stringify({
+          status: 'playing',
+          playerId: playerSession.playerId,
+          playerToken: playerSession.playerToken,
+        }),
       });
       if (response.ok) {
         setRoom((prev) =>
@@ -562,25 +632,21 @@ export default function RoomPage() {
     } catch (error) {
       console.error(error);
     }
-  }, [roomId]);
+  }, [playerSession?.playerId, playerSession?.playerToken, roomId]);
 
   const handleStartGame = async () => {
-    if (!playerSession?.isHost || !roomId) {
+    if (!isHostPlayer || !roomId) {
       return;
     }
     setIsStarting(true);
     const targetStatus = 'playing';
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      sendSocket({ type: 'status', payload: { status: targetStatus } });
-      setRoom((prev) =>
-        prev
-          ? {
-            ...prev,
-            status: targetStatus,
-          }
-          : prev,
-      );
-    } else {
+    const sentRealtime = emitSocket('room:update-status', { status: targetStatus }, (ack) => {
+      if (!ack.ok) {
+        console.warn(ack.error || 'Unable to start game');
+      }
+    });
+
+    if (!sentRealtime) {
       await startGameViaHttp();
     }
     setIsStarting(false);
@@ -726,7 +792,7 @@ export default function RoomPage() {
                     <GameBoard
                       room={{ ...room, gameState }}
                       playerId={playerSession?.playerId ?? null}
-                      onStateChange={handleStateChange}
+                      onMove={handleMove}
                       chatBubbles={animatedChatBubbles}
                     />
                   ) : (
@@ -838,7 +904,7 @@ export default function RoomPage() {
                           {player.name}
                         </p>
                         <p className="text-[10px] uppercase tracking-[0.4em] text-white/70">
-                          P{player.order + 1} • {player.isHost ? 'Host' : 'Guest'}
+                          P{player.order + 1} • {player.id === room?.hostId ? 'Host' : 'Guest'}
                         </p>
                       </div>
                     </div>

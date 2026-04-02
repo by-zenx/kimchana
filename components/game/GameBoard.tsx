@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Room, GameState } from '@/lib/types';
+import { Room } from '@/lib/types';
 import { GameEngine } from '@/lib/game-engine';
 import { GRID_SPACING, DOT_SIZE } from '@/lib/constants';
 
@@ -26,11 +26,11 @@ const customStyles = `
 interface GameBoardProps {
   room: Room;
   playerId: string | null;
-  onStateChange?: (state: GameState) => void;
+  onMove?: (edgeKey: string) => void;
   chatBubbles?: Array<{id: string, playerId: string, message: string, x?: number, y?: number}>;
 }
 
-export function GameBoard({ room, playerId, onStateChange, chatBubbles = [] }: GameBoardProps) {
+export function GameBoard({ room, playerId, onMove, chatBubbles = [] }: GameBoardProps) {
   // Inject custom styles
   useEffect(() => {
     const styleElement = document.createElement('style');
@@ -113,17 +113,20 @@ export function GameBoard({ room, playerId, onStateChange, chatBubbles = [] }: G
       return;
     }
 
+    if (room.gameState.status !== 'playing') {
+      return;
+    }
+
+    const activePlayer = room.gameState.players[room.gameState.currentPlayerIndex];
+    if (!activePlayer || activePlayer.id !== playerId) {
+      return;
+    }
+
     if (!GameEngine.isValidEdgeMove(edgeKey, room.gameState)) {
       return;
     }
 
-    const { newState } = GameEngine.playMove(
-      room.gameState,
-      edgeKey,
-      playerId
-    );
-
-    onStateChange?.(newState);
+    onMove?.(edgeKey);
   };
 
   return (

@@ -37,7 +37,6 @@ export function PlayerList({
                     : 'border-slate-700/50 bg-slate-800/20'
                 }`}
                 style={{
-                  ringColor: player.color,
                   borderColor: isCurrentPlayer ? player.color : undefined,
                 }}
               >
